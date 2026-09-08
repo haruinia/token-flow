@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+.data/
+sidecars/
+upstream/
+*.log
+.env
+.DS_Store
+
+# Generated test screenshots
+artifacts/
+.env.*

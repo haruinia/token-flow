@@ -1,0 +1,12 @@
+import { randomBytes } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { createDesktopService } from './service.js';
+const root=resolve(process.env.AGENT_DATA_ROOT??'.data');
+const token=process.env.AGENT_API_TOKEN??randomBytes(32).toString('hex');
+const values:Record<string,string>={openai:process.env.OPENAI_API_KEY??'',custom:process.env.CUSTOM_API_KEY??''};
+const service=await createDesktopService({root,token,localKey:randomBytes(32).toString('hex'),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):resolve('sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),headless:process.env.AGENT_HEADLESS==='1',uiRoot:resolve('dist/console'),secrets:{get:async name=>values[name]??'',set:async(name,value)=>{values[name]=value;}}});
+await writeFile(join(root,'api-token'),token,{mode:0o600});
+const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??4317)});
+console.log(`Browser Agent API: ${address}\nBearer token file: ${join(root,'api-token')}\nUse npm start for the authenticated desktop UI.`);
+for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{void service.app.close().then(()=>process.exit(0));});
