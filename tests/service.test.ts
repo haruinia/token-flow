@@ -1,7 +1,7 @@
 import { crc32, inflateSync } from 'node:zlib';
 import { afterEach, expect, it } from 'vitest';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDesktopService } from '../packages/core/src/service.js';
@@ -17,7 +17,7 @@ it('authenticates local API, blocks hostile origins/hosts and forwards SSE witho
    res.setHeader('content-type','text/event-stream');res.end('data: {"type":"response.completed"}\n\ndata: [DONE]\n\n');
  });await new Promise<void>(r=>upstream.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise<void>(r=>upstream.close(()=>r())));
  const dir=await root();const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=> 'provider-secret',set:async()=>{}}});cleanup.push(()=>service.app.close());
- const headers={host:'127.0.0.1:4317',authorization:'Bearer local-token'};
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
  expect((await service.app.inject({url:'/api/settings',headers:{host:headers.host}})).statusCode).toBe(401);
  expect((await service.app.inject({url:'/api/settings',headers:{...headers,origin:'https://evil.test'}})).statusCode).toBe(403);
  expect((await service.app.inject({url:'/api/settings',headers:{...headers,host:'evil.test'}})).statusCode).toBe(403);
@@ -28,6 +28,12 @@ it('authenticates local API, blocks hostile origins/hosts and forwards SSE witho
  expect((await service.app.inject({url:'/v1/models',headers})).json().data[0].id).toBe('fixture-model');
  const streamed=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model:'fixture-model',input:'Hi',stream:true}});expect(streamed.headers['content-type']).toContain('event-stream');expect(streamed.body).toContain('[DONE]');
  expect((await readFile(join(dir,'settings.json'),'utf8'))).not.toContain('secret');
+ // 桌面操作默认关闭、仅内存态；开启需要显式请求，且不会写入 settings.json。
+ expect((await service.app.inject({url:'/api/desktop',headers})).json()).toMatchObject({enabled:false,supported:['darwin','win32'].includes(process.platform)});
+ const toggled=await service.app.inject({method:'POST',url:'/api/desktop',headers,payload:{enabled:true}});
+ if(['darwin','win32'].includes(process.platform)){expect(toggled.json().enabled).toBe(true);expect((await service.app.inject({url:'/api/desktop',headers})).json().enabled).toBe(true);}else{expect(toggled.statusCode).toBe(400);}
+ expect((await service.app.inject({method:'POST',url:'/api/desktop',headers,payload:{enabled:'yes'}})).statusCode).toBe(400);
+ expect((await readFile(join(dir,'settings.json'),'utf8'))).not.toContain('desktop');
  expect(()=>providerSchema.parse({...config,baseURL:'http://public.example/v1'})).toThrow();expect(()=>providerSchema.parse({...config,baseURL:'https://user:pass@example.org/v1'})).toThrow();
 });
 it('probes actual Responses/tool continuation capabilities instead of assuming model compatibility',async()=>{
@@ -68,7 +74,24 @@ it('starts the real CLIProxyAPI binary with private app config and preserves an 
  await manager.cancelLogin(login.login!.id);expect(manager.snapshot().loginState).toBe('cancelled');
  await manager.stop();expect(manager.snapshot().state).toBe('stopped');
 });
-
+it('exposes a copyable Local Agent API key without putting it in the status snapshot, and rotates it on a running sidecar',async()=>{
+ const dir=await root();const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
+ const binary=resolve('sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi');
+ let stored='';
+ const service=await createDesktopService({root:dir,binary,token:'local-token',localKey:'test-random-local-key-42',proxyPort:port,headless:true,secrets:{get:async()=>stored,set:async(_name,value)=>{stored=value;}}});cleanup.push(()=>service.app.close());
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
+ expect((await service.app.inject({url:'/api/local-agent/gateway',headers:{host:headers.host}})).statusCode).toBe(401);
+ const gateway=(await service.app.inject({url:'/api/local-agent/gateway',headers})).json();
+ expect(gateway).toMatchObject({baseURL:`http://127.0.0.1:${port}/v1`,apiKey:'test-random-local-key-42',running:false});
+ expect(JSON.stringify((await service.app.inject({url:'/api/local-agent',headers})).json())).not.toContain('test-random-local-key-42');
+ expect((await service.app.inject({method:'PUT',url:'/api/local-agent/gateway',headers,payload:{apiKey:'short'}})).statusCode).toBe(400);
+ await service.proxy.start();
+ expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers:{Authorization:'Bearer test-random-local-key-42'}})).ok).toBe(true);
+ const rotated=(await service.app.inject({method:'PUT',url:'/api/local-agent/gateway',headers,payload:{apiKey:'rotated-local-client-key'}})).json();
+ expect(rotated.apiKey).toBe('rotated-local-client-key');expect(stored).toBe('rotated-local-client-key');expect(rotated.running).toBe(true);
+ expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers:{Authorization:'Bearer test-random-local-key-42'}})).status).toBe(401);
+ expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers:{Authorization:'Bearer rotated-local-client-key'}})).ok).toBe(true);
+});
 it('distinguishes upstream transport failures and skips dependent history probes without leaking error bodies',async()=>{
  const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const request=JSON.parse(body);
    const message=request.model==='tls'?'auth_unavailable: last error TLS handshake timeout https://secret.invalid/token':request.model==='eof'?'Post https://secret.invalid/token EOF':'auth_unavailable: no auth available';
@@ -80,4 +103,21 @@ it('distinguishes upstream transport failures and skips dependent history probes
    expect(result.responses).toBe(false);expect(result.errors.responses).toContain(expected);
    expect(result.errors.previousResponseId).toMatch(/^未执行：/);expect(JSON.stringify(result)).not.toContain('secret.invalid');
  }
+});
+it('loads settings.json with engine property and recovers gracefully from corrupted files',async()=>{
+ const dir=await root();
+ const payload={kind:'custom',engine:'pi',baseURL:'http://127.0.0.1:8317/v1',model:'gemini-3.8-flash-high',historyMode:'stateless',reasoning:'off'};
+ await writeFile(join(dir,'settings.json'),JSON.stringify(payload,null,2));
+ const service=await createDesktopService({root:dir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>service.app.close());
+ const headers={host:'127.0.0.1:9527',authorization:'Bearer local-token'};
+ const res=await service.app.inject({url:'/api/settings',headers});
+ expect(res.statusCode).toBe(200);
+ expect(res.json().provider).toMatchObject({kind:'custom',engine:'pi',model:'gemini-3.8-flash-high'});
+
+ const corruptDir=await root();
+ await writeFile(join(corruptDir,'settings.json'),'{ invalid json syntax');
+ const fallbackService=await createDesktopService({root:corruptDir,binary:'/missing',token:'local-token',localKey:'local-proxy-key',headless:true,secrets:{get:async()=>'',set:async()=>{}}});cleanup.push(()=>fallbackService.app.close());
+ const fallbackRes=await fallbackService.app.inject({url:'/api/settings',headers});
+ expect(fallbackRes.statusCode).toBe(200);
+ expect(fallbackRes.json().provider.kind).toBe('cliproxy');
 });

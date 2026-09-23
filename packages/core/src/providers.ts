@@ -4,6 +4,7 @@ import type { ResponsesClient, ResponsesApiResponse } from './responses-loop.js'
 
 export const providerSchema = z.object({
   kind: z.enum(['cliproxy','openai','custom']),
+  engine: z.enum(['legacy','pi']).optional(),
   baseURL: z.string().url().refine(value => {
     const url = new URL(value);
     return !url.username && !url.password && !url.search && !url.hash &&
@@ -12,17 +13,17 @@ export const providerSchema = z.object({
   model: z.string().trim().max(200),
   historyMode: z.enum(['stateless','previous_response_id']).default('stateless'),
   reasoning: z.enum(['off','low','medium','high']).default('off'),
-}).strict();
+}).passthrough();
 export type ProviderConfig = z.infer<typeof providerSchema>;
 export const defaultProvider: ProviderConfig = {kind:'cliproxy',baseURL:'http://127.0.0.1:8317/v1',model:'',historyMode:'stateless',reasoning:'off'};
 export type ProbeResult = {responses:boolean; functionCall:boolean; functionOutput:boolean; previousResponseId:boolean; imageInput:boolean; reasoning:boolean; errors:Record<string,string>};
 
 export class ResponsesProvider implements ResponsesClient {
   private client: OpenAI;
-  constructor(readonly config: ProviderConfig, apiKey: string) {
+  constructor(readonly config: ProviderConfig, apiKey: string, headers?:Record<string,string>) {
     providerSchema.parse(config);
     if (!apiKey) throw new Error('请先配置 Provider API Key 或启动 Local Agent。');
-    this.client = new OpenAI({apiKey, baseURL:config.baseURL.replace(/\/$/,''),timeout:60000,maxRetries:0,
+    this.client = new OpenAI({apiKey, defaultHeaders:headers, baseURL:config.baseURL.replace(/\/$/,''),timeout:60000,maxRetries:0,
       fetchOptions:{redirect:'error'}});
   }
   async create(request: Record<string, unknown>, signal: AbortSignal): Promise<ResponsesApiResponse> {

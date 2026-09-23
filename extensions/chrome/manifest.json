@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "token-flowb · 当前标签页",
+  "version": "1.1.0",
+  "description": "将你主动选择的 Chrome 标签页连接到本机 token-flowb。",
+  "minimum_chrome_version": "125",
+  "permissions": [
+    "debugger",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "交给 token-flowb",
+    "default_icon": {
+      "128": "icon.png"
+    }
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

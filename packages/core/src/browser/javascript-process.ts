@@ -34,6 +34,7 @@ type Options = BrowserSessionOptions & {
   endpoint: string;
   signal?: AbortSignal;
   executionTimeoutMs?: number;
+  desktop?: boolean;
 };
 
 function parseState(value: unknown): BrowserSessionState {
@@ -212,6 +213,7 @@ export async function launchJavaScriptSession(options: Options): Promise<JavaScr
       targetLabel: options.targetLabel,
       browserMode: options.browserMode,
       screenshotDir: options.screenshotDir,
+      desktop: options.desktop === true,
     }, parseState, options.signal, 15_000);
     return {
       mode: options.browserMode,

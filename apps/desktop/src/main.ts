@@ -1,43 +1,61 @@
-import { app, BrowserWindow, safeStorage, session, dialog, shell } from 'electron';
+import { app, BrowserWindow, safeStorage, session, dialog, shell, nativeImage, ipcMain, clipboard } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createSecrets } from './secrets.js';
+import { resolveProfile } from './profile.js';
 import { createDesktopService } from '../../../packages/core/src/service.js';
 
 const here=dirname(fileURLToPath(import.meta.url));
-if(process.env.AGENT_DATA_ROOT){const dataRoot=resolve(process.env.AGENT_DATA_ROOT);mkdirSync(dataRoot,{recursive:true,mode:0o700});app.setPath('userData',dataRoot);}
+// Retain the existing profile across the product rename, without copying credentials.
+const profile=resolveProfile(app.getPath('appData'),process.env.AGENT_DATA_ROOT);
+mkdirSync(profile,{recursive:true,mode:0o700});
+app.setPath('userData',profile);
+app.setName('token-flowb');
 if(!app.requestSingleInstanceLock()) app.quit();
-else { void start().catch(error=>{dialog.showErrorBox('Browser Agent 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
+else { void start().catch(error=>{dialog.showErrorBox('token-flowb 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
 async function start() {
   let window:BrowserWindow|undefined;
   let closing=false;
   await app.whenReady();
+  const icon=join(here,'console','app-icon.png');
+  if(process.platform==='darwin')app.dock?.setIcon(nativeImage.createFromPath(icon));
   const root=process.env.AGENT_DATA_ROOT?resolve(process.env.AGENT_DATA_ROOT):app.getPath('userData');
   await mkdir(join(root,'secrets'),{recursive:true,mode:0o700});
-  const secrets={
-    get:async(name:string)=>{try{const data=await readFile(join(root,'secrets',`${name}.bin`));return safeStorage.decryptString(data);}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return '';throw e;}},
-    set:async(name:string,value:string)=>{if(!safeStorage.isEncryptionAvailable()||(process.platform==='linux'&&safeStorage.getSelectedStorageBackend()==='basic_text'))throw new Error('系统安全密钥存储不可用');await writeFile(join(root,'secrets',`${name}.bin`),safeStorage.encryptString(value),{mode:0o600});}
-  };
+  const secrets=createSecrets(root,safeStorage);
   let localKey=await secrets.get('cliproxy');
-  if(!localKey){localKey=randomBytes(32).toString('hex');await secrets.set('cliproxy',localKey);}
+  if(!localKey){
+    localKey=randomBytes(32).toString('hex');
+    if(secrets.canEncrypt())await secrets.set('cliproxy',localKey);
+    else secrets.temporaryGateway();
+  }
   const token=randomBytes(32).toString('hex');
   const base=app.isPackaged?process.resourcesPath:resolve(here,'..');
-  const service=await createDesktopService({root,token,localKey,secrets,openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
-  const address=await service.app.listen({host:'127.0.0.1',port:0});
+  const service=await createDesktopService({root,token,localKey,secrets,credentialWarnings:secrets.warnings,openExternal:url=>shell.openExternal(url),proxyPort:process.env.AGENT_PROXY_PORT?Number(process.env.AGENT_PROXY_PORT):undefined,binary:process.env.CLIPROXY_BINARY?resolve(process.env.CLIPROXY_BINARY):join(base,'sidecars',`${process.platform}-${process.arch}`,process.platform==='win32'?'cliproxyapi.exe':'cliproxyapi'),uiRoot:join(here,'console')});
+  const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
+  ipcMain.handle('clipboard:write-text',(event,text:unknown)=>{
+    if(!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || new URL(event.senderFrame.url).origin!==address)throw new Error('Clipboard request denied');
+    if(typeof text!=='string' || text.length>1_000_000)throw new Error('Invalid clipboard text');
+    clipboard.writeText(text);
+  });
   await session.defaultSession.cookies.set({url:address,name:'agent_session',value:token,httpOnly:true,sameSite:'strict',path:'/'});
   const show=async()=>{
-    if(window){window.show();return;}
-    window=new BrowserWindow({width:1440,height:940,minWidth:960,minHeight:680,backgroundColor:'#151719',title:'Browser Agent',webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
+    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#ffffff',title:'token-flowb',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
     window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==address)event.preventDefault();});
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
     window.on('closed',()=>{window=undefined;});
     await window.loadURL(address);
+    window.show();
+    window.focus();
   };
   app.on('second-instance',()=>{void show();});app.on('activate',()=>{void show();});
   app.on('window-all-closed',()=>app.quit());
   app.on('before-quit',event=>{if(closing)return;event.preventDefault();closing=true;void service.app.close().finally(()=>app.quit());});
+  // The workspace opens immediately; saved accounts, namespaced models and quotas load in the background.
+  void service.discoverLocal().catch(() => undefined); // Failure is exposed in the model center with a retry action.
   await show();
 }

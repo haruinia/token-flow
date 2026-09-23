@@ -22,7 +22,9 @@
 | 人工接管 | 用户暂停、操作边界等待、模型主动接管、继续后重新观察当前页；支持切换 Tab | 暂停、过期继续请求、停止解除等待、人工修改后继续 |
 | 模型接入 | OpenAI / Custom Responses 地址、受管 CLIProxyAPI；模型列表、六类能力探测 | 协议模拟测试；部分真实账号请求，见下方限制 |
 | 本机接口转换 | CLIProxyAPI Go sidecar；转发 `/v1/models`、`/v1/responses`、`/v1/chat/completions` | 真实 sidecar 启停、鉴权及模拟流式转发 |
-| 账号连接 | Codex、Claude、Antigravity；官方授权页、状态轮询、自动回调、手动补交、取消与重试 | 模拟账号流程；用户已实际连接账号 |
+| 账号连接 | Codex、Claude、Antigravity（授权码 + 本机回调）；Kimi、xAI Grok（RFC 8628 设备码）；官方授权页、状态轮询、自动回调、手动补交、取消与重试。登录层按 Provider 拆分在 `packages/core/src/login/`，router 层（`cliproxy.ts`）按 `/v1/models` 的 `type` 把模型归到登录 Provider | 模拟账号流程；用户已实际连接 Codex / Claude / Antigravity；Kimi / xAI 已用真实订阅登录 |
+| 额度监控 | 额度层 `packages/core/src/quota/` 按 Provider 拆分；经 CLIProxyAPI `/api-call`（上游替换 `$TOKEN$`）查询 Codex / Claude / Antigravity / Kimi / xAI 官方用量接口，归一化为窗口（已用 %、计数或金额、重置时间）并在账号列表下展示 | 模拟响应单测 + Electron 端到端；真实账号的字段结构待用户点击「刷新额度」验证 |
+| 桌面操作（Windows / macOS） | 桌面层 `packages/core/src/desktop/`：`exec_js` 内新增 `desktop` 全局（截图、鼠标键盘、组合键、打开/聚焦应用、窗口列表），沿用“代码执行而非逐次 computer action”的路线。macOS 走 osascript JXA + CGEvent + screencapture，Windows 走 PowerShell + user32 + System.Drawing，零依赖。开关为内存态、默认关闭；开启后 instructions 追加桌面说明，Worker 看门狗放宽到 60 秒，模型用过 desktop 后存档截图切换为桌面截图 | 坐标换算 / 键码 / 权限上报单测，Worker 暴露与不暴露集成测试，服务开关测试，Electron 端到端开关；真机鼠标键盘注入与 Windows 脚本未自动化验证 |
 | 账号管理 | 读取账号状态、启停账号、刷新模型、选择模型、服务重启后重新读取账号 | 集成与桌面测试 |
 | 运行记录 | Run 元数据、事件、截图、结果和 replay.json；历史列表查看 | 完成任务后验证落盘与控制台展示；不是完整视频播放器 |
 | 本机凭据 | Electron safeStorage；私有配置目录与文件权限；本机 API 鉴权和 Host/Origin 校验 | 未授权访问、敏感字段不返回控制台的测试 |
@@ -2010,3 +2012,13 @@ LICENSES/
 ```
 
 这条顺序可以最大程度减少重构返工。
+
+# 38. Chrome 当前标签页扩展（实现增量）
+
+已增加 `extensions/chrome` Manifest V3 扩展和本机 `packages/core/src/browser/extension-relay.ts`。用户在桌面生成单次连接码，在已登录的 Chrome 网站标签页点击扩展主动接入；Worker 仍通过 Playwright `connectOverCDP` 使用原有执行循环。具体安装步骤见 README「连接日常 Chrome 当前标签页」。
+
+桌面工作台可选择独立 Profile 或扩展来源，运行中不能切换来源。配对只监听随机 loopback 端口，验证 Host、扩展 Origin 和短期随机令牌；Worker 使用不同的 CDP 令牌。断开会撤销连接、拒绝等待中的命令并 detach，不关闭用户标签页或 Chrome。
+
+首版限定单一选定 tab，保留 DOM 定位、页面内操作、截图和页面已有登录状态；不支持创建/关闭其他 tab 或浏览器全局操作。普通 HTTP/HTTPS 页面可连接，Chrome 内部页不支持。参考并改造 Playwright 1.63 的 BrowserModel/CDPRelay 会话映射方式，Apache-2.0 许可与 NOTICE 已随包保留。
+
+新增自动化验收使用真实 Chromium 加载真实扩展：页面已有 localStorage 状态 → 扩展选定 tab → 独立 Worker 填表/截图 → 重连 → 断开；另一个 tab 不被暴露给 Playwright，断开后不能继续修改表单。尚未验证用户个人 Chrome 的全部扩展、企业策略或跨域 iframe 组合，不声称全面兼容。

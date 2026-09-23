@@ -12,13 +12,16 @@ let app;
 try {
   const packaged = process.argv.includes('--packaged');
   app = await electron.launch({args: packaged ? [] : ['.'],
-    ...(packaged ? {executablePath: resolve('release/mac-arm64/Browser Agent.app/Contents/MacOS/Browser Agent')} : {}),
-    env: {...process.env, AGENT_DATA_ROOT: root, AGENT_PROXY_PORT: String(port), CLIPROXY_BINARY: resolve('tests/fixtures/fake-cliproxy.mjs')},
+    ...(packaged ? {executablePath: resolve('release/mac-arm64/token-flowb.app/Contents/MacOS/token-flowb')} : {}),
+    env: {...process.env, AGENT_DATA_ROOT: root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'), AGENT_PORT: '0', AGENT_PROXY_PORT: String(port), CLIPROXY_BINARY: resolve('tests/fixtures/fake-cliproxy.mjs')},
   });
   // Only the test process intercepts shell.openExternal. Production always uses the real browser.
   await app.evaluate(({shell}) => {globalThis.openedOAuthURLs = [];shell.openExternal = async url => {globalThis.openedOAuthURLs.push(url);};});
   const page = await app.firstWindow();const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.getByRole('button',{name:'Local Agent',exact:false}).first().click();
+  await page.getByRole('navigation').getByRole('button',{name:'模型中心',exact:true}).click();
+  await page.getByRole('tab',{name:'账号与模型',exact:true}).click();
+  await page.waitForFunction(()=>fetch('/api/local-agent').then(r=>r.json()).then(s=>s.state==='running'));
+  await page.locator('.gatewaySummary').getByText('网关运行中',{exact:true}).waitFor();
   await page.getByRole('button',{name:'连接 Codex'}).click();
   await page.getByRole('button',{name:'取消本次授权'}).waitFor();
   assert.equal(await app.evaluate(() => globalThis.openedOAuthURLs.length),1);
@@ -34,11 +37,11 @@ try {
   await page.getByRole('button',{name:'停用',exact:true}).click();
   await page.getByRole('button',{name:'启用',exact:true}).waitFor();
   await page.getByRole('button',{name:'启用',exact:true}).click();
-  await page.getByRole('button',{name:'使用此模型并前往能力检测'}).waitFor();
-  await page.getByRole('button',{name:'使用此模型并前往能力检测'}).click();
-  await page.getByRole('heading',{name:'模型与接口',exact:true}).waitFor();
-  assert.equal(await page.locator('input[list=models]').inputValue(),'fixture-codex-model');
-  await page.getByRole('button',{name:'Local Agent',exact:false}).first().click();
+  await page.getByRole('button',{name:'选择 codex/fixture-codex-model',exact:true}).waitFor();
+  await page.getByRole('button',{name:'选择 codex/fixture-codex-model',exact:true}).click();
+  await page.getByRole('heading',{name:'Codex 接入配置',exact:true}).waitFor();
+  await page.getByRole('navigation').getByRole('button',{name:'模型中心',exact:true}).click();
+  await page.getByRole('tab',{name:'账号与模型',exact:true}).click();
   await page.getByRole('button',{name:'连接 Claude'}).click();
   await page.getByText('已授权，但浏览器无法打开 localhost 回调？',{exact:true}).click();
   const login=await page.evaluate(() => fetch('/api/local-agent').then(r=>r.json()).then(s=>s.login));
@@ -46,13 +49,62 @@ try {
   await page.getByLabel('完整回调地址',{exact:true}).fill(`http://localhost:54545/callback?state=${state}&code=test-fixture-callback`);
   await page.getByRole('button',{name:'提交回调',exact:true}).click();
   await page.getByText('Claude 授权',{exact:true}).waitFor();
-  await page.waitForFunction(() => document.querySelectorAll('.accountList .account').length===2);
-  await page.getByRole('button',{name:'重启',exact:true}).click();
+  await page.waitForFunction(() => document.querySelectorAll('.providerAccounts .account').length===2);
+  // Device-code providers: user code shown, no callback form, completion routes the model to the login provider.
+  await page.getByRole('button',{name:'连接 Kimi'}).click();
+  await page.getByText('FIXT-CODE',{exact:true}).waitFor();
+  assert.equal(await page.getByText('已授权，但浏览器无法打开 localhost 回调？',{exact:true}).count(),0);
+  assert.match((await app.evaluate(() => globalThis.openedOAuthURLs.at(-1))),/^https:\/\/www\.kimi\.com\/code\/authorize_device\?user_code=FIXT-CODE$/);
+  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({complete:true})});
+  await page.getByText('Kimi 授权',{exact:true}).waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('.providerAccounts .account').length===3);
+  await page.getByRole('button',{name:'选择 kimi/fixture-kimi-model',exact:true}).waitFor();
+  // Quota monitoring: per-account usage windows fetched through upstream api-call with fixture payloads.
+  await page.getByRole('button',{name:'刷新账号与额度',exact:true}).click();
+  await page.getByText('5h window',{exact:false}).first().waitFor();
+  assert.ok((await page.locator('.quotaWindow').count())>=5);
+  assert.equal(await page.locator('.quota.error').count(),0);
+  await page.getByRole('tab',{name:'网关设置',exact:true}).click();
+  await page.getByRole('button',{name:'重启网关',exact:true}).click();
   await page.waitForFunction(() => !document.querySelector('.busy'));
-  assert.equal(await page.locator('.accountList .account').count(),2);
+  await page.getByRole('tab',{name:'账号与模型',exact:true}).click();
+  assert.equal(await page.locator('.providerAccounts .account').count(),3);
+  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({modelSets:{codex:['fixture-codex-model','fixture-codex-fast']}})});
+  await page.getByRole('button',{name:'刷新账号与额度',exact:true}).click();
+  await page.getByRole('button',{name:'选择 codex/fixture-codex-fast',exact:true}).waitFor();
+  await page.getByRole('tab',{name:'API Keys',exact:true}).click();
+  await page.getByRole('button',{name:'创建 Key',exact:true}).click();
+  await page.getByLabel('Key 名称',{exact:true}).fill('Cursor 测试');
+  const all=page.getByLabel('全选所有提供商与模型',{exact:true});
+  await all.check();
+  await page.getByLabel('全选 Claude',{exact:true}).uncheck();
+  assert.equal(await all.evaluate(el=>el.indeterminate),true);
+  await page.getByLabel('全选 Codex',{exact:true}).uncheck();
+  await page.getByRole('button',{name:'生成 Key',exact:true}).click();
+  const clientKey=await page.getByLabel('新建 API Key',{exact:true}).inputValue();
+  const allowed=await page.evaluate(key=>fetch('/v1/models',{headers:{Authorization:`Bearer ${key}`}}).then(r=>r.json()),clientKey);
+  assert.deepEqual(allowed.data.map(m=>m.id),['kimi/fixture-kimi-model']);
+  const denied=await page.evaluate(key=>fetch('/v1/responses',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:'codex/fixture-codex-model',input:'Hi'})}).then(r=>r.status),clientKey);
+  assert.equal(denied,403);
+  await page.getByRole('button',{name:'我已保存，关闭',exact:true}).click();
+  await page.getByRole('button',{name:'编辑权限',exact:true}).click();
+  assert.equal(await page.getByLabel('kimi/fixture-kimi-model',{exact:true}).isChecked(),true);
+  await page.getByLabel('codex/fixture-codex-model',{exact:true}).check();
+  assert.equal(await page.getByLabel('全选 Codex',{exact:true}).evaluate(el=>el.indeterminate),true);
+  await page.screenshot({path:'artifacts/model-key-scopes.png'});
+  await page.getByRole('button',{name:'保存权限',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('.keyEditor'));
+  await mkdir('artifacts',{recursive:true});
+  await page.screenshot({path:'artifacts/model-keys.png'});
+  await page.getByRole('tab',{name:'账号与模型',exact:true}).click();
+  await page.getByLabel('搜索提供商、账号或模型',{exact:true}).fill('codex');
+  assert.equal(await page.locator('.providerCard').count(),1);
+  await page.getByLabel('搜索提供商、账号或模型',{exact:true}).fill('');
+  await page.getByLabel('只看已连接',{exact:true}).check();
+  assert.equal(await page.locator('.providerCard').count(),3);
   assert.deepEqual(errors,[]);
   await mkdir('artifacts',{recursive:true});await page.screenshot({path:'artifacts/local-agent-accounts.png'});
-  console.log(JSON.stringify({loginUI:'passed',callbacks:'automatic + manual',accounts:2,restart:'restored',realAccountLogin:false}));
+  console.log(JSON.stringify({loginUI:'passed',callbacks:'automatic + manual',deviceCode:'kimi',quota:'codex + claude + kimi',accounts:3,restart:'restored',realAccountLogin:false}));
 } catch(error) {
   if(app?.windows()[0]) {await mkdir('artifacts',{recursive:true});await app.windows()[0].screenshot({path:'artifacts/login-failure.png'});console.error((await app.windows()[0].locator('body').innerText()).slice(-3000));}
   throw error;

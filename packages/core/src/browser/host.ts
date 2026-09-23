@@ -24,6 +24,9 @@ export class BrowserHost {
       env:safeEnvironment(),timeout:30000,handleSIGINT:false,handleSIGTERM:false,handleSIGHUP:false,
     });
     try {
+      // Chromium 138+ 对访问局域网地址的页面弹「访问本地网络中的其他设备」权限框。它是浏览器级 UI，
+      // 页面在用户点选前一直停在加载中（白屏），模型任务随之中断。预先对所有站点授予该权限，弹框不再出现。
+      await context.grantPermissions(['local-network-access']).catch(()=>undefined);
       const port = (await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0];
       if(!/^\d+$/.test(port)) throw new Error('无法读取浏览器调试端口');
       this.context=context; this.endpoint=`http://127.0.0.1:${port}`;

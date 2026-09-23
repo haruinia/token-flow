@@ -1,5 +1,5 @@
 {
-  "name": "desktop-browser-agent",
+  "name": "token-flowb",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -18,35 +18,49 @@
     "browser:install": "playwright install chromium",
     "sidecar:build": "node scripts/build-sidecar.mjs",
     "package": "npm run build && electron-builder --dir",
+    "package:win": "node scripts/build-sidecar.mjs win32-x64 && npm run build && electron-builder --win zip --x64",
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "prebuild": "node scripts/clean-build.mjs",
-    "test:login": "node scripts/login-smoke.mjs"
+    "test:login": "node scripts/login-smoke.mjs",
+    "test:design": "node scripts/design-smoke.mjs",
+    "test:gateway": "node scripts/gateway-smoke.mjs",
+    "test:a2a": "node scripts/a2a-smoke.mjs",
+    "test:sidecar-pin": "node scripts/test-sidecar-pin.mjs",
+    "test:sidecar-qoder": "node scripts/test-sidecar-qoder.mjs",
+    "test:sidecar-agents": "node scripts/test-sidecar-qoder.mjs"
   },
   "dependencies": {
     "@cua-sample/contracts": "*",
+    "@cursor/sdk": "1.0.31",
+    "@earendil-works/pi-agent-core": "0.87.0",
+    "@earendil-works/pi-ai": "0.87.0",
     "@fastify/static": "^8.3.0",
     "fastify": "^5.12.1",
     "openai": "^6.25.0",
     "playwright": "^1.55.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "smol-toml": "^1.4.2",
+    "typebox": "1.3.27",
+    "ws": "^8.21.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.1",
     "electron": "^40.0.0",
     "electron-builder": "^26.0.12",
     "tsup": "^8.4.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.8.2",
     "vite": "^7.0.0",
-    "vitest": "^3.2.7",
-    "tsx": "^4.20.5"
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "local.browseragent.desktop",
-    "productName": "Browser Agent",
+    "productName": "token-flowb",
     "files": [
       "dist/**",
       "package.json"
@@ -62,18 +76,29 @@
       {
         "from": "LICENSES",
         "to": "LICENSES"
+      },
+      {
+        "from": "extensions/chrome",
+        "to": "extensions/chrome"
       }
     ],
     "mac": {
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "apps/console/public/app-icon.png"
+    },
+    "win": {
+      "target": [
+        "zip"
+      ],
+      "icon": "apps/console/public/app-icon.png"
     },
     "directories": {
       "output": "release"
     }
   },
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.19.0"
   },
-  "description": "Local desktop browser agent with persistent Chromium and CLIProxyAPI",
-  "author": "Browser Agent contributors"
+  "description": "token-flowb — local model gateway for your agents",
+  "author": "token-flowb contributors"
 }

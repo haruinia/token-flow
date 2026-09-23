@@ -12,6 +12,8 @@ export type WorkerOperation =
     targetLabel: string;
     browserMode: BrowserMode;
     screenshotDir: string;
+    /** 为 REPL 暴露 `desktop` 全局（操作本机 Windows / macOS 桌面）。 */
+    desktop?: boolean;
   }
   | { operation: "execute"; code: string }
   | { operation: "inspect" }

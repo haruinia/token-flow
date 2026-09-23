@@ -76,7 +76,7 @@ export function ScreenshotPane({
   const imageDimensions = selectedScreenshot?.imageWidth && selectedScreenshot.imageHeight
     ? { width: selectedScreenshot.imageWidth, height: selectedScreenshot.imageHeight }
     : !selectedScreenshot?.source || selectedScreenshot.source === "browser_preview" ? selectedBrowser?.viewport : undefined;
-  const sourceLabel = selectedScreenshot?.source === "code_tool" ? "Code tool image" : "Browser preview";
+  const sourceLabel = selectedScreenshot?.source === "code_tool" ? "操作截图" : "浏览器截图";
 
   return (
     <div className="browserSurface">
@@ -90,11 +90,11 @@ export function ScreenshotPane({
             <p className="reviewEyebrow">
               {selectedScreenshot
                 ? selectedRun?.run.status === "running" && viewingLiveFrame
-                  ? "Live frame"
-                  : "Pinned frame"
+                  ? "最新画面"
+                  : "回放画面"
                 : selectedRun
-                  ? "Awaiting frame"
-                  : "Selected app"}
+                  ? "等待截图"
+                  : "观察窗口"}
             </p>
             <h3>
               {selectedScreenshot
@@ -121,7 +121,7 @@ export function ScreenshotPane({
                 ) : null}
               </>
             ) : (
-              <span className="readoutChip">No frames yet</span>
+              <span className="readoutChip">尚无截图</span>
             )}
           </div>
         </div>
@@ -136,8 +136,8 @@ export function ScreenshotPane({
               src={`${runnerBaseUrl}${selectedScreenshot.url}`}
             />
           ) : (
-            <div className="stagePlaceholder">
-              <h3>{selectedRun ? "Waiting for first frame" : "Ready to capture"}</h3>
+            <div className="stagePlaceholder"><img className="previewLogo" src="/logo.svg" alt="" width="64" height="64"/>
+              <h3>{selectedRun ? "正在等待第一张截图" : "你的操作，即将在这里展开"}</h3>
               <p>{emptyReviewMessage}</p>
             </div>
           )}
@@ -146,7 +146,7 @@ export function ScreenshotPane({
         <div className={`scrubberPanel ${screenshots.length === 0 ? "isEmpty" : ""}`}>
           <div className="scrubberRow">
             <div className="scrubberCopy">
-              <h4>Review timeline</h4>
+              <h4>回放时间线</h4>
             </div>
             <div className="scrubberActions">
               <button
@@ -157,7 +157,7 @@ export function ScreenshotPane({
                 onClick={() => setShowThumbnails((shown) => !shown)}
                 type="button"
               >
-                {showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
+                {showThumbnails ? "收起缩略图" : "展开缩略图"}
               </button>
               {!viewingLiveFrame && screenshots.length > 0 ? (
                 <button
@@ -165,7 +165,7 @@ export function ScreenshotPane({
                   onClick={onJumpToLatestScreenshot}
                   type="button"
                 >
-                  Jump to latest
+                  回到最新画面
                 </button>
               ) : null}
               <button
@@ -174,7 +174,7 @@ export function ScreenshotPane({
                 onClick={onOpenReplay}
                 type="button"
               >
-                Replay JSON
+                导出回放
               </button>
             </div>
           </div>

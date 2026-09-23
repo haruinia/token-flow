@@ -11,3 +11,5 @@ upstream/
 # Generated test screenshots
 artifacts/
 .env.*
+
+.ai-tracker

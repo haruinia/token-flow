@@ -15,7 +15,7 @@ async function fixture(){
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise<void>(r=>server.close(()=>r())));
  const host=new BrowserHost(root,true);const endpoint=await host.open();cleanup.push(()=>host.close());
  const page=host.context!.pages()[0];await page.goto(`http://127.0.0.1:${(server.address() as {port:number}).port}`);
- const launch=(timeout=5000)=>launchJavaScriptSession({endpoint,workerPath:resolve('packages/core/src/javascript-worker.ts'),browserMode:'headless',screenshotDir:join(root,'shots'),targetLabel:'test',url:'',executionTimeoutMs:timeout});
+ const launch=(timeout=5000,desktop=false)=>launchJavaScriptSession({endpoint,workerPath:resolve('packages/core/src/javascript-worker.ts'),browserMode:'headless',screenshotDir:join(root,'shots'),targetLabel:'test',url:'',executionTimeoutMs:timeout,desktop});
  return {root,host,page,launch};
 }
 describe('persistent browser + isolated worker',()=>{
@@ -37,6 +37,16 @@ describe('persistent browser + isolated worker',()=>{
    expect((await worker.readState()).pageTitle).toBe('New tab');
    expect(JSON.stringify(await worker.execute('console.log(await page.title())'))).toContain('New tab');
    process.env.CUSTOM_SECRET_SENTINEL='not-in-worker';expect(safeEnvironment()).not.toHaveProperty('CUSTOM_SECRET_SENTINEL');delete process.env.CUSTOM_SECRET_SENTINEL;
+ });
+ it('exposes the desktop global only when desktop control is enabled, without touching the OS until used',async()=>{
+   const {launch}=await fixture();
+   const plain=await launch();cleanup.push(()=>plain.close());
+   expect(JSON.stringify(await plain.execute('console.log(typeof desktop)'))).toContain('undefined');
+   const enabled=await launch(5000,true);cleanup.push(()=>enabled.close());
+   // 只检查接口形状，不触发任何 osascript / powershell 调用。
+   expect(JSON.stringify(await enabled.execute("console.log(typeof desktop, ['screenshot','click','type','key','open','windows'].every(k => typeof desktop[k] === 'function'))"))).toContain('object true');
+   // 桌面未被使用时，存档截图仍是浏览器页面。
+   expect((await enabled.captureScreenshot('still-browser')).currentUrl).toMatch(/^http:\/\/127\.0\.0\.1/);
  });
 });
 describe('human control',()=>{
