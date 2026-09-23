@@ -23,7 +23,7 @@ try{
   const args=['--print','Return the provider name. Do not use tools.','--model',`${provider}/shared-model`,'--tools','','--max-turns','1','--no-session-persistence','--strict-mcp-config','--mcp-config','{"mcpServers":{}}'];
   const result=await new Promise<{code:number|null;stdout:string;stderr:string}>((res,rej)=>{const child=spawn(target==='workbuddy'?process.execPath:claudeCLI,target==='workbuddy'?[workbuddyCLI,...args]:args,{cwd:join(root,'workspace'),env,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);const timer=setTimeout(()=>child.kill('SIGTERM'),45000);child.once('error',rej);child.once('close',code=>{clearTimeout(timer);res({code,stdout,stderr});});});
   // Output contains fixture data only; redact local client keys before diagnostics.
-  console.log(JSON.stringify({target,provider,...result},null,2).replace(/tfb_[A-Za-z0-9_-]+/g,'[fixture-key]'));
+  console.log(JSON.stringify({target,provider,...result},null,2).replace(/tfl_[A-Za-z0-9_-]+/g,'[fixture-key]'));
   assert.equal(result.code,0);assert.ok(result.stdout.includes(provider));
   assert.equal((await service.app.inject({method:'POST',url:'/api/a2a/restore',headers,payload:{id:connected.json().id}})).statusCode,200);
  }

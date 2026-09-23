@@ -77,7 +77,7 @@ export function LocalAgentPane({local, view, selectedModel, disabled, onAction, 
     .sort((a,b) => Number(b.accounts.length > 0) - Number(a.accounts.length > 0));
   if (view === 'gateway') return <div className="settings gatewaySettings"><section>
     <div className="sectionTitle"><h2>本机模型网关</h2><span className="status"><i className={`dot ${local.state === 'running' ? 'ok' : ''}`}/>{states[local.state] ?? local.state}</span></div>
-    <p className="hint">每次打开 token-flowb 自动启动，加载已保存的账号与可用模型。为兼容客户端分配权限，请使用「API Keys」。下方保留内部网关的直连设置。</p>
+    <p className="hint">每次打开 token-flow 自动启动，加载已保存的账号与可用模型。为兼容客户端分配权限，请使用「API Keys」。下方保留内部网关的直连设置。</p>
     <details className="gatewayLogs"><summary>高级：内部网关直连（拥有全部模型权限）</summary><p className="hint">内部密钥不受客户端 Key 权限限制。需要限制模型范围时，使用「API Keys」中的地址与密钥。</p><GatewayFields disabled={unavailable || pending} port={local.port} onSave={onGateway}/></details>
     <div className="buttons"><button disabled={unavailable || local.state === 'running'} onClick={() => void onAction('start')}>启动网关</button><button disabled={unavailable || local.state !== 'running'} onClick={() => void onAction('stop')}>停止网关</button><button disabled={unavailable} onClick={() => void onAction('restart')}>重启网关</button></div>
     {local.lastError && <p className="hint" role="alert">{local.lastError}</p>}
@@ -90,12 +90,13 @@ export function LocalAgentPane({local, view, selectedModel, disabled, onAction, 
     <div className="providerGrid">{providers.map(item => {
       const connected = local.state === 'running' && item.accounts.some(a=>!a.disabled);
       const remaining = item.accounts.filter(a=>!a.disabled).flatMap(a=>(local.quotas[a.id]?.status==='ok'?local.quotas[a.id]?.windows??[]:[]).flatMap(w=>w.usedPercent===null?[]:[Math.max(0,100-w.usedPercent)]));
+      const quotaFailed=item.accounts.some(a=>!a.disabled&&local.quotas[a.id]?.status==='error');
       const detailsOpen = expanded.includes(item.id) || !!search || (login?.provider===item.id && pending);
       const matchedModels = item.models.filter(m => !search || `${m.id} ${modelLabel(local.models,m.id)}`.toLowerCase().includes(search) || `${item.id} ${item.label}`.toLowerCase().includes(search) || item.accounts.some(a=>a.label.toLowerCase().includes(search)));
       const canImport = ['doubao', 'trae', 'workbuddy', 'zcode'].includes(item.id);
       return <section className={`providerCard ${connected ? 'connected' : ''}`} key={item.id} data-provider={item.id} aria-label={`${item.label} 提供商`}>
         <button className="providerCardHead" aria-expanded={detailsOpen} aria-controls={`provider-details-${item.id}`} onClick={()=>setExpanded(current=>current.includes(item.id)?current.filter(id=>id!==item.id):[...current,item.id])}><span className={`providerMonogram provider-${item.id}`}>{({codex:'C',claude:'✳',antigravity:'A',kimi:'K',xai:'x',qoder:'Q',workbuddy:'W',zcode:'Z',doubao:'豆',trae:'T',cursor:'C'} as Record<string,string>)[item.id]}</span><div><h2>{item.label}</h2><span className="providerNamespace">{item.accounts.length ? `${item.accounts.length} 个账号 · ${item.models.length?`${item.models.length} 个模型`:connected?'模型同步中':'0 个模型'}` : '连接以共享模型'}</span></div><span className={`providerConnection ${connected ? 'isConnected' : ''}`}><i className={`dot ${connected ? 'ok' : ''}`}/>{local.state !== 'running' && item.accounts.length ? '离线' : connected ? '已连接' : item.accounts.length ? '已停用' : '未连接'}</span><Icon name="chevron" size={14}/></button>
-        <div className="providerOverview"><span>{connected ? remaining.length ? `剩余 ${Math.round(Math.min(...remaining))}%` : '额度暂未提供' : '官方账号授权'}</span><button className="textButton" aria-expanded={detailsOpen} aria-controls={`provider-details-${item.id}`} onClick={()=>setExpanded(current=>current.includes(item.id)?current.filter(id=>id!==item.id):[...current,item.id])}>{detailsOpen?'收起':'账号与模型'} <Icon name="chevron" size={12}/></button></div>
+        <div className="providerOverview"><span>{connected ? remaining.length ? `剩余 ${Math.round(Math.min(...remaining))}%${quotaFailed?' · 部分账号更新失败':''}` : quotaFailed?'额度更新失败':'额度暂未提供' : '官方账号授权'}</span><button className="textButton" aria-expanded={detailsOpen} aria-controls={`provider-details-${item.id}`} onClick={()=>setExpanded(current=>current.includes(item.id)?current.filter(id=>id!==item.id):[...current,item.id])}>{detailsOpen?'收起':'账号与模型'} <Icon name="chevron" size={12}/></button></div>
         <div id={`provider-details-${item.id}`} hidden={!detailsOpen}>
         <p className="providerHint">{item.id==='antigravity'?'Google 账号授权 · 模型以账号返回为准。':item.hint}</p>
         <div className="providerAccounts">{item.accounts.map(account => {
@@ -109,10 +110,11 @@ export function LocalAgentPane({local, view, selectedModel, disabled, onAction, 
             </div>
           </div>
           {account.unavailable && <p className="hint accountWarning" role="alert" style={{color: 'var(--danger, #d75466)', margin: '4px 0 8px'}}>⚠️ 此账号凭据已失效或缺少配置，建议点击「删除」清理此凭据，避免影响底层调度。</p>}
-          {account.isDuplicate && !account.unavailable && <p className="hint duplicateNotice" role="status" style={{color: '#8490a4', margin: '4px 0 8px'}}>ℹ️ 检测到同名重复账号凭据。建议删除失效或多余旧凭据以保持调度清晰。</p>}
+          {account.isDuplicate && !account.unavailable && <p className="hint duplicateNotice" role="status" style={{color: '#8490a4', margin: '4px 0 8px'}}>ℹ️ 此账号有多份授权记录；同名不代表失效，已确认失效的授权会自动移出账号池。</p>}
           {!quota && !account.disabled && <p className="hint quotaPending">{local.quotaBusy ? '正在读取账号额度…' : '尚无额度数据，请刷新查询。'}</p>}
           {quota && !account.disabled && <div className={`quota ${quota.status}`} aria-label={`${account.label} 额度`}>
             {quota.status === 'error' && <p className="hint" role="alert">额度查询失败：{quota.error}</p>}
+            {quota.status==='error'&&quota.lastSuccessfulAt&&<p className="hint">以下为 {new Date(quota.lastSuccessfulAt).toLocaleString()} 的上次成功结果，仅供参考，不是当前额度。</p>}
             {quota.windows.map(window => <div className="quotaWindow quotaWindowRing" key={window.id}>
               <QuotaRing remaining={window.usedPercent===null?null:100-window.usedPercent} label={window.label}/>
               <div className="quotaWindowDetails"><div className="quotaMeta"><span>{window.label}</span></div>

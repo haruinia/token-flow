@@ -117,6 +117,8 @@ it('queries per-account quota through upstream api-call without handling tokens,
   const kimi=Object.values(snapshot.quotas).find(q => q.provider==='kimi')!;
   expect(kimi.status).toBe('error');expect(kimi.error).toMatch(/HTTP 429/);expect(JSON.stringify(snapshot)).not.toContain('upstream-secret');
   expect(Object.values(snapshot.quotas).find(q => q.provider==='xai')!.status).toBe('ok');
+  await fixture({mode:'quota-bridge-error'});const failed=await manager.refreshQuota();const cached=Object.values(failed.quotas).find(q=>q.provider==='kimi')!;expect(cached.error).toContain('额度上游连接失败');expect(cached.error).not.toContain('回调端口');expect(cached.windows).toEqual(byProvider.kimi.windows);expect(cached.lastSuccessfulAt).toBe(byProvider.kimi.observedAt);expect(failed.accounts.find(a=>a.provider==='kimi')?.unavailable).toBe(false);
+  await fixture({mode:'wait'});const recovered=Object.values((await manager.refreshQuota()).quotas).find(q=>q.provider==='kimi')!;expect(recovered.status).toBe('ok');expect(recovered.lastSuccessfulAt).toBeUndefined();
   expect((await fixture()).apiCalls.length).toBeGreaterThanOrEqual(calls.length+1);
 });
 it('exposes Kimi and xAI login actions through the desktop API',async () => {
@@ -211,4 +213,23 @@ it('retries failed namespace registration instead of caching it as successful',a
  await manager.start();expect(manager.snapshot().models).toEqual([]);
  await expect.poll(()=>manager.snapshot().models.map(m=>m.id),{timeout:5000}).toContain('codex/gpt-6-astra');
  expect(manager.snapshot().accountError).toBeUndefined();
+});
+it('archives and removes explicitly revoked credentials while retaining quota errors and duplicate valid accounts',async()=>{
+ const {manager,root}=await setup();const {readFile,readdir,realpath}=await import('node:fs/promises');
+ // safe credential reads reject symlink ancestors; use the canonical temp path.
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});
+ const files=[{name:'revoked.json',provider:'codex',email:'same@example.test',status:'error',status_message:'refresh_token_revoked'},{name:'valid.json',provider:'codex',email:'same@example.test',status:'active'},{name:'quota.json',provider:'codex',email:'quota@example.test',status:'error',status_message:'HTTP 401'}];
+ await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify(files));await writeFile(join(root,'cliproxy/auth/revoked.json'),'{"refresh_token":"fixture-secret"}');
+ const canonical=await realpath(root);const clean=new CLIProxyManager(canonical,binary,'fixture-key',manager.port);cleanup.push(()=>clean.shutdown());await clean.start();
+ expect(clean.snapshot().accounts.map(a=>a.label).sort()).toEqual(['quota@example.test','same@example.test']);
+ const archive=await readdir(join(root,'revoked-credentials'));expect(archive).toHaveLength(1);expect(await readFile(join(root,'revoked-credentials',archive[0]),'utf8')).toBe('{"refresh_token":"fixture-secret"}');expect(JSON.stringify(clean.snapshot())).not.toContain('fixture-secret');
+});
+
+it('does not reimport a browser-authorized Codex account under a second filename on startup',async()=>{
+ const {manager,root}=await setup();const {realpath}=await import('node:fs/promises');
+ await mkdir(join(root,'cliproxy/auth'),{recursive:true});await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'browser-codex.json',provider:'codex',email:'same@example.test',status:'active',models:['model']}]));
+ const credential={account_id:'same-account',access_token:'fixture-access',refresh_token:'fixture-refresh',id_token:'x.e30.x'};
+ await writeFile(join(root,'cliproxy/auth/browser-codex.json'),JSON.stringify(credential));
+ const canonical=await realpath(root);const proxy=new CLIProxyManager(canonical,binary,'fixture-key',manager.port);cleanup.push(()=>proxy.shutdown());await proxy.start();
+ await proxy.importCredential('codex',credential,true);expect(proxy.snapshot().accounts).toHaveLength(1);
 });

@@ -30,5 +30,5 @@ export type QuotaProvider = {
 /** 归一化后的单账号额度快照，进入 UI。 */
 export type AccountQuota = {
   accountId: string; provider: LoginProviderId | 'cursor'; status: 'ok' | 'error';
-  observedAt: string; plan?: string; windows: QuotaWindow[]; note?: string; error?: string;
+  observedAt: string; lastSuccessfulAt?: string; plan?: string; windows: QuotaWindow[]; note?: string; error?: string;
 };

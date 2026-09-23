@@ -1,5 +1,5 @@
 {
-  "name": "token-flowb",
+  "name": "token-flow",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -60,7 +60,7 @@
   },
   "build": {
     "appId": "local.browseragent.desktop",
-    "productName": "token-flowb",
+    "productName": "token-flow",
     "files": [
       "dist/**",
       "package.json"
@@ -99,6 +99,6 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "description": "token-flowb — local model gateway for your agents",
-  "author": "token-flowb contributors"
+  "description": "token-flow — local model gateway for your agents",
+  "author": "token-flow contributors"
 }

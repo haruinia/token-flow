@@ -14,7 +14,7 @@ let app;
 try {
   await mkdir(output, {recursive:true});
   app = await electron.launch({args:packaged?[]:['.'],
-    ...(packaged?{executablePath:resolve('release/mac-arm64/token-flowb.app/Contents/MacOS/token-flowb')} : {}),
+    ...(packaged?{executablePath:resolve('release/mac-arm64/token-flow.app/Contents/MacOS/token-flow')} : {}),
     env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(proxyPort),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
   const page = await app.firstWindow();
   const errors = [];
@@ -23,10 +23,10 @@ try {
   await page.getByRole('button',{name:'任务调试',exact:true}).click();await page.getByRole('tab',{name:'浏览器任务',exact:true}).click();
   await page.locator('.workspaceIntro').waitFor();
   await page.evaluate(() => document.fonts.ready);
-  assert.equal(await page.title(),'token-flowb');
-  assert.equal(await app.evaluate(({app})=>app.getName()),'token-flowb');
+  assert.equal(await page.title(),'token-flow');
+  assert.equal(await app.evaluate(({app})=>app.getName()),'token-flow');
   assert.equal(await app.evaluate(({app})=>app.getPath('userData')),root);
-  assert.match(await page.locator('.brand').innerText(),/token-flowb/);
+  assert.match(await page.locator('.brand').innerText(),/token-flow/);
   assert.equal(await page.getByRole('complementary',{name:'运行环境'}).isVisible(),true);
   assert.equal(await page.locator('.preview').count(), 0);
   assert.equal(await page.locator('#task-options').isVisible(), false);
@@ -104,8 +104,8 @@ try {
       await writeFile(bootstrap,`const {app}=require('electron');app.setPath('appData',${JSON.stringify(appData)});import(${JSON.stringify(new URL('../dist/main.js',import.meta.url).href)});`);
       app=await electron.launch({args:[bootstrap],env:{...process.env,AGENT_DATA_ROOT:'',AGENT_PORT:'0',AGENT_PROXY_PORT:String(proxyPort),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
       const profilePage=await app.firstWindow();await profilePage.locator('.brand').waitFor();
-      assert.equal(await app.evaluate(({app})=>app.getPath('userData')),join(appData,existing?'desktop-browser-agent':'token-flowb'));
-      assert.equal(await app.evaluate(({app})=>app.getName()),'token-flowb');
+      assert.equal(await app.evaluate(({app})=>app.getPath('userData')),join(appData,existing?'desktop-browser-agent':'token-flow'));
+      assert.equal(await app.evaluate(({app})=>app.getName()),'token-flow');
       await app.close();app=undefined;
     }
   }

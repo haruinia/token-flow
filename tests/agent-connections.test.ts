@@ -7,11 +7,11 @@ import { parse } from 'smol-toml';
 import { AgentConnections,connectedConfig } from '../packages/core/src/agent-connections.js';
 import { agentConfig } from '../apps/console/src/agent-config.js';
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
-async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'agent-connect-test-'));roots.push(root);const paths={codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};let pids:number[]=[];const connections=new AgentConnections(root,paths,async()=>pids);await mkdir(join(root,'codex'));await mkdir(join(root,'claude'));return {root,paths,connections,running:(next:number[])=>pids=next};}
+async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'agent-connect-test-'));roots.push(root);const paths={qoder:join(root,'qoder/settings.json'),codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};let pids:number[]=[];const connections=new AgentConnections(root,paths,async()=>pids);await mkdir(join(root,'codex'));await mkdir(join(root,'claude'));return {root,paths,connections,running:(next:number[])=>pids=next};}
 it('backs up exact original config, preserves providers and unrelated settings, restores and recovers across reopen',async()=>{
  const {root,paths,connections}=await setup();const original='# original comment\nmodel = "old"\nprofile = "work"\n[profiles.work]\nmodel = "profile-old"\n[model_providers.original]\nbase_url = "https://example.test"\n';await writeFile(paths.codex,original);
  const status=(await connections.status())[0];const record=await connections.apply({target:'codex',revision:status.revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
- const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBeUndefined();expect(parsed.model_provider).toBe('token_flowb');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work');
+ const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBeUndefined();expect(parsed.model_provider).toBe('token_flow');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work');
  expect((await stat(paths.codex)).mode&0o777).toBe(0o600);expect(JSON.stringify(await connections.status())).not.toContain('fixture-key');
  await new AgentConnections(root,paths,async()=>[]).restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
 });
@@ -54,8 +54,56 @@ it('reviews actual Claude routing without exposing keys and detects stale auxili
  const config=JSON.parse(await readFile(paths.claude,'utf8'));config.env.ANTHROPIC_SMALL_FAST_MODEL='stale';await writeFile(paths.claude,JSON.stringify(config));const drift=await connections.review(record.id);expect(drift.checks.find(c=>c.name==='主模型与辅助模型一致')?.ok).toBe(false);expect(drift.checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(false);
 });
 
-it('keeps WorkBuddy empty availableModels unrestricted and reviews models rewritten as an array',async()=>{
- const config=JSON.parse(connectedConfig('workbuddy','{"models":[],"availableModels":[]}','http://127.0.0.1:9527','qoder/test','fixture-key'));expect(config.availableModels).toEqual([]);
+it('refuses lossy WorkBuddy object conversion and reviews native arrays',async()=>{
+ expect(()=>connectedConfig('workbuddy','{"models":[],"availableModels":[]}','http://127.0.0.1:9527','qoder/test','fixture-key')).toThrow('额外设置');
  const {paths,connections}=await setup();const status=(await connections.status())[2];const record=await connections.apply({target:'workbuddy',revision:status.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
- const saved=JSON.parse(await readFile(paths.workbuddy,'utf8'));await writeFile(paths.workbuddy,JSON.stringify(saved.models));const review=await connections.review(record.id);expect(review.checks.find(c=>c.name==='自定义模型已写入配置')?.ok).toBe(true);expect(review.checks.find(c=>c.name==='接口地址与工具能力正确')?.ok).toBe(true);expect(review.liveCallVerified).toBe(false);expect(review.note).toContain('输入框下方');
+ const saved=JSON.parse(await readFile(paths.workbuddy,'utf8'));await writeFile(paths.workbuddy,JSON.stringify(Array.isArray(saved)?saved:saved.models));const review=await connections.review(record.id);expect(review.checks.find(c=>c.name==='自定义模型已写入配置')?.ok).toBe(true);expect(review.checks.find(c=>c.name==='接口地址与工具能力正确')?.ok).toBe(true);expect(review.liveCallVerified).toBe(false);expect(review.note).toContain('输入框下方');
+});
+
+it('keeps native WorkBuddy models through its array-only startup cleanup',()=>{
+ for(const original of [null,'[]','{"models":[]}']){
+  const config=JSON.parse(connectedConfig('workbuddy',original,'http://127.0.0.1:9527','qoder/k3','key'));
+  // Installed WorkBuddy hardware-gate cleanup only retains root-array remote models.
+  const retained=(Array.isArray(config)?config:[]).filter(m=>m?.local!==true);
+  expect(retained).toHaveLength(1);expect(retained[0].id).toBe('qoder/k3');
+ }
+});
+it('switches a missing WorkBuddy connection to the selected source while preserving original rollback',async()=>{
+ const {paths,connections}=await setup();await mkdir(join(paths.workbuddy,'..'),{recursive:true});await writeFile(paths.workbuddy,'[]');
+ const initial=(await connections.status())[2];const old=await connections.apply({target:'workbuddy',revision:initial.revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'old',keyId:randomUUID(),key:'old-key'});
+ await writeFile(paths.workbuddy,'[]');expect((await connections.status())[2].configurationState).toBe('missing');
+ const preview=await connections.preview('workbuddy','http://127.0.0.1:9527','qoder/k3');expect(preview.replaceId).toBe(old.id);expect(JSON.stringify(preview)).not.toContain('old-key');
+ const next=await connections.apply({target:'workbuddy',revision:preview.revision,replaceId:old.id,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'qoder',keyId:randomUUID(),key:'new-key'});
+ expect(JSON.parse(await readFile(paths.workbuddy,'utf8'))[0].id).toBe('qoder/k3');expect((await connections.status())[2].configurationState).toBe('configured');expect((await connections.review(next.id)).checks.every(c=>c.ok)).toBe(true);
+ await connections.restore(next.id);expect(await readFile(paths.workbuddy,'utf8')).toBe('[]');expect((await connections.status())[2].backups.every(r=>r.state==='restored')).toBe(true);
+});
+it('redacts unrelated provider secrets from approval previews and refuses changed revisions',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.claude,JSON.stringify({env:{ANTHROPIC_CUSTOM_SECRET:'private-secret'}}));const p=await connections.preview('claude','http://127.0.0.1:9527','qoder/k3');expect(JSON.stringify(p)).not.toContain('private-secret');await writeFile(paths.claude,'{"new":true}');
+ await expect(connections.apply({target:'claude',revision:p.revision,origin:'http://127.0.0.1:9527',model:'qoder/k3',sourceId:'s',keyId:randomUUID(),key:'key'})).rejects.toThrow();expect(await readFile(paths.claude,'utf8')).toBe('{"new":true}');
+});
+it('recovers interrupted replacement journals and verifies replacement backup checksums',async()=>{
+ const {root,paths,connections}=await setup();await writeFile(paths.claude,'{}');const initial=(await connections.status())[1];const old=await connections.apply({target:'claude',revision:initial.revision,origin:'http://127.0.0.1:9527',model:'old/m',sourceId:'old',keyId:randomUUID(),key:'old-key'});const before=await readFile(paths.claude,'utf8');const preview=await connections.preview('claude','http://127.0.0.1:9527','new/m');
+ const next=await connections.apply({target:'claude',revision:preview.revision,replaceId:old.id,origin:'http://127.0.0.1:9527',model:'new/m',sourceId:'new',keyId:randomUUID(),key:'new-key'});const path=join(root,'agent-backups',`${next.id}.json`);const journal=JSON.parse(await readFile(path,'utf8'));journal.state='prepared';await writeFile(path,JSON.stringify(journal));await writeFile(paths.claude,before);
+ await connections.repair(next.id);expect(JSON.parse(await readFile(paths.claude,'utf8')).model).toBe('new/m');await connections.restore(next.id);expect(await readFile(paths.claude,'utf8')).toBe('{}');journal.previousConfig='corrupt';await writeFile(path,JSON.stringify(journal));await expect(connections.status()).rejects.toThrow('备份记录损坏');
+});
+it('recognizes WorkBuddy formatting rewrites and can replace the selected model',async()=>{
+ const {root,paths,connections}=await setup();await mkdir(join(root,'workbuddy'));await writeFile(paths.workbuddy,'[]');
+ const first=await connections.apply({target:'workbuddy',revision:(await connections.status())[2].revision,origin:'http://127.0.0.1:9527',model:'qoder/old',sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+ await writeFile(paths.workbuddy,JSON.stringify(JSON.parse(await readFile(paths.workbuddy,'utf8'))));
+ expect((await connections.status())[2].configurationState).toBe('configured');expect((await connections.review(first.id)).checks.every(c=>c.ok)).toBe(true);
+ const preview=await connections.preview('workbuddy','http://127.0.0.1:9527','qoder/new');
+ const second=await connections.apply({target:'workbuddy',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'qoder/new',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+ await writeFile(paths.workbuddy,JSON.stringify(JSON.parse(await readFile(paths.workbuddy,'utf8'))));await connections.restore(second.id);expect(await readFile(paths.workbuddy,'utf8')).toBe('[]');
+});
+
+it('adds, switches and restores Qoder standalone providers while preserving unrelated settings',async()=>{
+ const {paths,connections}=await setup();await mkdir(join(paths.qoder,'..'),{recursive:true});
+ const original=JSON.stringify({hooks:{keep:true},providers:{existing:{apiKey:'original-key',baseUrl:'https://example.test'}}});await writeFile(paths.qoder,original);
+ const first=await connections.apply({target:'qoder',revision:(await connections.status()).find(t=>t.id==='qoder')!.revision,origin:'http://127.0.0.1:9527',model:'codex/first',sourceId:'source',keyId:randomUUID(),key:'first-key'});
+ expect((await connections.review(first.id)).checks.every(c=>c.ok)).toBe(true);
+ const preview=await connections.preview('qoder','http://127.0.0.1:9527','codex/second');expect(JSON.stringify(preview)).not.toContain('original-key');expect(JSON.stringify(preview)).not.toContain('first-key');
+ const next=await connections.apply({target:'qoder',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'codex/second',sourceId:'source',keyId:randomUUID(),key:'second-key'});
+ const doc=JSON.parse(await readFile(paths.qoder,'utf8'));expect(doc.hooks).toEqual({keep:true});expect(doc.providers.existing.apiKey).toBe('original-key');expect(doc.providers['token-flow']).toMatchObject({protocol:'openai-responses',baseUrl:'http://127.0.0.1:9527/v1',model:'codex/second',apiKey:'second-key'});
+ await connections.restore(next.id);expect(await readFile(paths.qoder,'utf8')).toBe(original);
+ expect(()=>connectedConfig('qoder','{"providers":{"token-flow":{}}}','http://127.0.0.1:9527','codex/model','key')).toThrow();
 });

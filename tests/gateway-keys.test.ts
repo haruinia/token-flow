@@ -125,7 +125,7 @@ it('blocks a finite key after a truncated stream even when initial usage was rep
 it('pins A2A keys to their selected credential, blocks spoofing and fails closed when that source is disabled',async()=>{
  const {service,admin}=await setup();const source=service.proxy.snapshot().accounts.find(a=>a.provider==='codex')!;
  const created=await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'Pinned',sourceId:source.id,models:['codex/shared-model']}});expect(created.statusCode).toBe(200);
- const headers={host:admin.host,authorization:`Bearer ${created.json().apiKey}`,'x-token-flowb-auth':'claude.json'};
+ const headers={host:admin.host,authorization:`Bearer ${created.json().apiKey}`,'x-token-flow-auth':'claude.json'};
  const response=await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model:'codex/shared-model',input:'hi'}});expect(response.statusCode).toBe(200);expect(response.json().output[0].content[0].text).toBe('codex');
  await service.proxy.setAccountEnabled(source.id,false);
  expect((await service.app.inject({method:'POST',url:'/v1/responses',headers,payload:{model:'codex/shared-model',input:'hi'}})).statusCode).toBe(503);

@@ -63,8 +63,8 @@ export async function listenForCallback(provider: LoginProvider, submit: (redire
         request.url?.split('?')[0] !== path) {response.writeHead(400); response.end('无效授权回调。'); return;}
     try {
       await submit(`http://localhost:${port}${request.url}`);
-      response.end('授权回调已收到。请返回 token-flowb 查看连接结果，可以关闭此页面。');
-    } catch {response.writeHead(400); response.end('回调未被接受，可能已提交或会话已过期。请返回 token-flowb 查看状态。');}
+      response.end('授权回调已收到。请返回 token-flow 查看连接结果，可以关闭此页面。');
+    } catch {response.writeHead(400); response.end('回调未被接受，可能已提交或会话已过期。请返回 token-flow 查看状态。');}
   };
   const servers: Server[] = [];
   try {

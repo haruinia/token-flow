@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {CLIProxyManager} from '../packages/core/src/cliproxy.js';
 
 // Real bundled sidecar, synthetic credentials, model discovery only: no inference.
-const root=await mkdtemp(join(tmpdir(),'token-flowb-catalog-'));
+const root=await mkdtemp(join(tmpdir(),'token-flow-catalog-'));
 const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));
 const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
 const manager=new CLIProxyManager(root,resolve('sidecars/darwin-arm64/cliproxyapi'),'fixture-internal-key',port);

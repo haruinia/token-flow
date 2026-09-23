@@ -1,6 +1,6 @@
-# token-flowb
+# token-flow
 
-面向 Codex、Claude Code 和 OpenAI 兼容 Agent 的本地模型网关。认证各厂商账号，统一模型目录与 Responses API，再适配不同 Agent 的调用协议；以独立客户端 Key 管理共享权限。原有浏览器任务作为辅助调试工具保留。
+面向 Codex、Claude Code 和 OpenAI 兼容 Agent 的本地模型网关。认证各厂商账号，统一模型目录与 Responses API，再适配不同 Agent 的调用协议；以独立客户端 Key 管理共享权限。
 
 ## A2A 点选接入与网关维修
 
@@ -16,13 +16,15 @@ Cursor 暂不提供本机直连接入。模型中心现通过官方 SDK 独立�
 
 备份位于数据目录 `agent-backups/`（含完整配置，按敏感文件保管）。先持久化预备记录，再原子替换配置。检查进程、配置指纹、符号链接和并发操作锁；已运行的 Agent 不会被终止；用户确认后可写入接入设置并在完成后重启。外部修改不会被自动覆盖。还原后撤销接入 Key。若异常退出留下锁，需先确认没有配置操作，再人工处理锁文件。进程检查是保守快照，不能阻止外部应用在检查后启动；项目配置、命令行参数、环境变量和组织策略可能覆盖用户级设置。
 
-选择维修模型后自动通过 Pi 的 Responses 适配器发起一次短文本检测；重启应用并加载本地授权后检测一次，不随页面轮询重复调用。只有真实响应通过才显示“已就位”，界面保留检测时间和重新检测入口。此检查消耗少量模型额度，不等于已验证所有维修工具能力。调用失败按授权、额度、网络或响应格式分类，不回显上游凭据；失败后的下一次提问使用新模型上下文，相同工具检查重复超过两次停止本轮。
+选择维修模型后自动通过 Pi 的 Responses 适配器发起一次短文本检测；重启应用并加载本地授权后检测一次，不随页面轮询重复调用。只有真实响应通过才显示“已就位”，界面保留检测时间和重新检测入口。此检查消耗少量模型额度，不等于已验证所有维修工具能力。调用失败按授权、额度、网络或响应格式分类，不回显上游凭据；失败后的下一次提问使用新模型上下文，相同工具和参数重复超过两次时将提示返回模型，允许它改用其他工具；超过本轮总次数或时限才停止。
 
 Qoder IDE 作为目标时使用官方 Settings → Models → Add → OpenAI Compatible → Responses，需在 Qoder 中“验证并添加”后选择模型。本应用提供限定源账号与模型的 Key 和接入参数，尚不自动写入 Qoder 配置。CLI 使用 `/model → Custom` 官方向导，不手写其 `settings.json`。
 
-**任务调试 → 网关维修** 可独立选择源授权与模型。维修模型由 Pi Agent Core 驱动，通过本机 Responses 接口调用，查看网关和接入元数据、刷新账号模型，以及修复未完成写入、还原原接口；每次任务的配置修改由界面显式授权，所有写入仍经过同一套冲突检查。此功能复用本地 Agent 的授权，通过内置工具执行，不启动任意 CLI 或开放通用 shell。网关离线时模型维修不可用，A2A 的本地还原仍可使用。原浏览器任务位于同页的另一标签。
+“找师傅帮忙”会立即诊断首页选中的源账号、模型和目标 Agent，不要求先填写问题。预检自动附带当前接入记录、源账号与额度、Key 权限、配置检查、备份、进程和相关近期调用；意向链路与实际接入分别提供。后续追问保留这条链路，切换链路自动清理上一条的模型上下文。预检或工具异常作为结果交回 Pi Agent Loop，由模型判断后继续检查；所有修改先生成绑定当前链路和文件版本的方案，选定链路的维修不得修改其他目标的记录。
 
-本轮验收：类型检查、构建、A2A 源码及打包版桌面检查通过；全量 Vitest 114/115 通过，原有 Chrome 扩展连接测试超时，独立复测仍超时，未标记全量通过。原浏览器任务桌面回归通过。
+**辅助工具 → 网关维修** 可独立选择源授权与模型。维修模型由 Pi Agent Core 驱动，通过本机 Responses 接口调用，查看网关和接入元数据、刷新账号模型，以及修复未完成写入、还原原接口；默认先展示具体配置操作代码，用户同意后执行，再由 Pi 复查。可开启“替我审批”，默认使用维修模型，也可另选审批模型；审批失败交回人工，拒绝不执行。审批只能批准不可变方案，不能改写代码；方案十分钟失效、一次性执行，执行前仍核对文件版本。重启后恢复人工审批，聊天和待审批方案不持久化。此功能复用本地 Agent 的授权，通过内置工具执行，不启动任意 CLI 或开放通用 shell。网关离线时模型维修不可用，A2A 的本地还原仍可使用。
+
+本轮验收：类型检查、构建、A2A 源码及打包版桌面检查通过；全量 Vitest 114/115 通过，原有 Chrome 扩展连接测试超时，独立复测仍超时，未标记全量通过。
 
 验证：`node scripts/a2a-smoke.mjs` 使用隔离目录实际写入与还原配置，进程快照在测试引导中模拟；`node scripts/test-sidecar-pin.mjs` 验证真实 Go 路由元数据；其他测试覆盖凭据固定、权限、配置冲突、维修工具与未授权还原。不会修改用户真实 Agent 配置或发起真实付费请求。
 
@@ -34,15 +36,15 @@ Qoder / WorkBuddy 使用同一 Responses 中间层：目标 Agent 请求 → Res
 
 ## 界面与桌面应用（2026-09-22）
 
-A2A 为默认首页，API 总览：显示网关状态、已启用账号、可用模型、客户端 Key，以及本次运行的调用与上游报告 token 用量。主导航为 API 总览、模型中心、Agent 接入、API Keys；任务调试和执行历史位于辅助工具。沿用 AIHub 浅色蓝色视觉与原创汇流 Logo。
+A2A 为默认首页，API 总览：显示网关状态、已启用账号、可用模型、客户端 Key，以及本次运行的调用与上游报告 token 用量。主导航为 API 总览、模型中心、Agent 接入、API Keys；网关维修和执行历史位于辅助工具。沿用 AIHub 浅色蓝色视觉与原创汇流 Logo。
 
-macOS 应用使用融合标题栏和原创 Dock 图标，启动时加载完成后显示窗口。最新本机应用为 `release/mac-arm64/token-flowb.app`，需退出旧实例后重新打开此路径。当前为未签名开发包；Windows 名称和图标配置已更新，本轮未重新生成 Windows 包。更名后自动沿用已有的 `Browser Agent` / `desktop-browser-agent` 数据目录（按打包 / 源码运行模式优先选择）；首次使用时创建 `token-flowb` 目录，`AGENT_DATA_ROOT` 仍可覆盖。保留原 bundle ID 以延续应用身份。执行历史支持关键词与状态筛选。
+macOS 应用使用融合标题栏和原创 Dock 图标，启动时加载完成后显示窗口。最新本机应用为 `release/mac-arm64/token-flow.app`，需退出旧实例后重新打开此路径。当前为未签名开发包；Windows 名称和图标配置已更新，本轮未重新生成 Windows 包。更名后自动沿用已有的 `token-flowb` / `Browser Agent` / `desktop-browser-agent` 数据目录（按打包 / 源码运行模式优先选择）；首次使用时创建 `token-flow` 目录，`AGENT_DATA_ROOT` 仍可覆盖。保留原 bundle ID 以延续应用身份。执行历史支持关键词与状态筛选。
 
 运行 `node scripts/gateway-smoke.mjs` 验证 API 首页、三类 Agent 配置、认证、本地 fixture 请求、用量显示、Key 额度耗尽拦截、编辑与重置；加 `--packaged` 验证打包版本。`npm run test:design` 验证辅助页面在 390、768、1320 像素下的布局、示例草稿、设置 / 回放开关与 renderer 隔离；`node scripts/design-smoke.mjs --packaged` 验证打包应用。新版截图见 [API 总览](artifacts/gateway/overview.png) 和 [Agent 接入](artifacts/gateway/agents.png)（测试数据）。
 
 ## 本机交付
 
-当前 macOS ARM64 应用目录包：`release/mac-arm64/token-flowb.app`，可在 Finder 打开。它是未签名的开发版本，不是对外发布安装包。工作台截图见 [desktop-smoke.png](artifacts/desktop-smoke.png)，账号页面见 [local-agent-accounts.png](artifacts/local-agent-accounts.png)（均为测试数据）。
+当前 macOS ARM64 应用目录包：`release/mac-arm64/token-flow.app`，可在 Finder 打开。它是未签名的开发版本，不是对外发布安装包。工作台截图见 [desktop-smoke.png](artifacts/desktop-smoke.png)，账号页面见 [local-agent-accounts.png](artifacts/local-agent-accounts.png)（均为测试数据）。
 
 此前版本本机验收已通过：类型检查、构建、108 项自动化测试，以及源码启动和打包后 `.app` 两种 Electron 端到端测试。端到端流程使用本机模拟 Provider 发起 10 次 Responses 请求，直接执行代码、真实 Chromium 表单填写、人工接管与继续，生成 4 张截图和 Replay。真实 CLIProxyAPI 的启动、鉴权、授权会话生成/取消和停止另有集成测试；源码和打包应用均通过账号页面端到端测试，覆盖自动回调、手动补交、取消重试、账号启停、模型选择和重启恢复。用户已连接真实账号；Antigravity 真实文本请求曾成功，图片调用仍受上游网络故障影响，详见设计文档第 0 节。
 
@@ -70,7 +72,7 @@ Codex 使用 `/v1/responses`，提供 HTTP / SSE 和 `/v1/responses/compact`；�
 
 客户端配置参考 [Codex 官方配置](https://developers.openai.com/codex/config-reference) 和 [Claude Code 官方网关文档](https://code.claude.com/docs/en/llm-gateway)。适配协议不意味着所有模型具有相同的工具、图片、推理能力；实际兼容性取决于模型和上游服务。当前提供本机访问，不包含跨设备共享、余额交易或额度结算。
 
-原浏览器任务入口保留在 **辅助工具 → 任务调试**。需要先在模型中心的接口与能力页配置并探测任务模型，再打开任务浏览器和执行任务；人工接管、截图与 Replay 逻辑保持可用。
+产品界面现聚焦模型网关、Agent 接入和网关维修；浏览器任务入口已移除。
 
 ## P0 本机 API
 
@@ -131,7 +133,7 @@ Provider 设置请求：
 }
 ```
 
-网关不自行重写模型协议。转换、OAuth、多账号路由复用 CLIProxyAPI；token-flowb 提供本机鉴权、Provider 选择与浏览器操作的任务 API。不要把 CLIProxyAPI 的管理凭据当作 API Key。
+网关不自行重写模型协议。转换、OAuth、多账号路由复用 CLIProxyAPI；token-flow 提供本机鉴权、Provider 选择与浏览器操作的任务 API。不要把 CLIProxyAPI 的管理凭据当作 API Key。
 
 OpenAI 兼容的本机客户端请在 **模型中心 → API Keys** 创建独立 Key，使用该页的 Base URL（默认 `http://127.0.0.1:9527/v1`）。按「全部 → 提供商 → 模型」勾选范围，支持半选；全选只授权当前模型，新增模型需再次勾选。`GET /v1/models` 只列出该 Key 已授权且当前可用的模型；Responses / Chat 请求在转发前检查精确模型 ID，越权返回 403、停用 Key 返回 401、模型离线返回 503。Key 无工作台管理权限，且始终路由到本机网关，不随任务使用的 Custom 接口变化。
 
@@ -169,7 +171,7 @@ Router  packages/core/src/cliproxy.ts + CLIProxyAPI            受管进程、�
 任务工作台勾选「允许操作桌面应用」后，Agent 除浏览器外还能操作本机桌面（多显示器时截图并操作前台窗口所在的那块屏幕）：`exec_js` 中多出 `desktop` 全局，模型用同一套代码执行方式调用 `await desktop.screenshot()`（截图回显给模型）、`desktop.click / doubleClick / rightClick / move / drag / scroll`、`desktop.type(text)`、`desktop.key('cmd+shift+t')`、`desktop.open('备忘录')`、`desktop.focus(app)`（二者返回 `{frontmostApp}`；应用已运行但没有窗口时会重新开窗）、`desktop.windows()`，等待界面用 `await sleep(ms)`。坐标是最近一次截图的像素坐标；macOS Retina 截图按 points 重采样后与系统坐标一致，Windows 进程声明 DPI 感知后与物理像素一致。模型一旦用过 `desktop`，该任务后续的存档截图改为桌面截图，Replay 中可回看。
 
 - 零依赖实现：macOS 用 `osascript -l JavaScript` 的 ObjC 桥直接投递 `CGEvent`，System Events 发组合键，`screencapture` + `sips` 截图；Windows 用 PowerShell 调 `user32`（`SetCursorPos` / `mouse_event` / `keybd_event`）和 `System.Drawing` 截图。文本输入统一走剪贴板粘贴（Unicode 安全，完成后恢复原剪贴板文本）。
-- 权限：macOS 需要为 token-flowb 授予「辅助功能」（鼠标键盘）和「屏幕录制」（截图），首次列举窗口还会弹出「控制 System Events」的自动化授权。开关旁显示权限状态，「申请系统权限」按钮触发系统弹窗；源码运行（`npm run dev`）时权限记在启动它的终端上。未授权时输入会静默失效、截图只有壁纸，模型会被指示停下并请求人工接管。Windows 不需要额外授权，但 UAC 提权窗口无法被操作。
+- 权限：macOS 需要为 token-flow 授予「辅助功能」（鼠标键盘）和「屏幕录制」（截图），首次列举窗口还会弹出「控制 System Events」的自动化授权。开关旁显示权限状态，「申请系统权限」按钮触发系统弹窗；源码运行（`npm run dev`）时权限记在启动它的终端上。未授权时输入会静默失效、截图只有壁纸，模型会被指示停下并请求人工接管。Windows 不需要额外授权，但 UAC 提权窗口无法被操作。
 - 边界：开关不落盘，每次启动应用都需重新勾选；任务运行中不能切换。只操作主显示器；不提供文件系统、终端或剪贴板读取接口。`desktop` 与 `exec_js` 一样默认自动执行，人工接管是唯一的确认门。这不是针对恶意模型代码的隔离：开启后模型可以点到屏幕上的任何东西，请只在可见、可随时暂停的情况下使用，并把任务限定在具体应用内。
 
 ## 账号连接与恢复
@@ -218,7 +220,7 @@ node scripts/login-smoke.mjs --packaged
 
 ## 当前边界
 
-这是开发者 P0/MVP，已实现本机转换底座和默认自动执行的浏览器任务闭环。不是完成全部 P1–P3 的商业发行版：目前只有一个持久 Profile，未实现 Vault/简历管理、多 Profile UI、自动更新、代码签名/公证、系统托盘、浏览器扩展与多 Agent。
+这是开发者 P0/MVP，已实现本机转换底座。浏览器任务入口已从产品界面移除；这不是完成全部 P1–P3 的商业发行版：目前只有一个持久 Profile，未实现 Vault/简历管理、多 Profile UI、自动更新、代码签名/公证、系统托盘与多 Agent。
 
 `node:vm` 和独立 Worker **不是恶意代码的 OS 安全沙箱**。Worker 只保留环境白名单，有 64 KiB 代码限制、12 MiB 输出限制和 30 秒调用看门狗（开启桌面操作时 60 秒）；执行默认自动进行。当前未实现 OS 级隔离与细粒度权限。模型按用户任务授权范围行动，不能将提示词视为强制安全边界。桌面操作在真机上的鼠标键盘注入尚未自动化测试（需要系统授权），本地测试覆盖坐标换算、键码翻译、权限上报和 Worker 暴露逻辑；Windows 驱动脚本未在本机验证。
 
@@ -242,7 +244,7 @@ Antigravity 排错：Responses、工具和图片请求都通过 CLIProxyAPI 的�
 
 1. 在 Chrome 打开 `chrome://extensions`，开启「开发者模式」，选择「加载已解压的扩展程序」，加载项目的 `extensions/chrome` 文件夹。打包应用内也有 `Contents/Resources/extensions/chrome`。
 2. 在桌面任务工作台选择「Chrome 当前标签页 · 扩展」，点击「生成连接码」并复制。
-3. 切到你已登录的网站，点击 token-flowb 扩展图标，粘贴连接码并点击「连接当前标签页」。连接码 5 分钟有效且单次使用。
+3. 切到你已登录的网站，点击 token-flow 扩展图标，粘贴连接码并点击「连接当前标签页」。连接码 5 分钟有效且单次使用。
 4. 桌面显示已连接的页面标题后启动任务。页面沿用原 Chrome 的登录状态，不复制 Cookie 或 Profile。
 5. 点击扩展或桌面的「断开连接」随时结束控制。任务结束不会关闭 Chrome；仍连接时可以继续下一任务。切换到其他标签页需重新生成连接码并主动选择。
 
@@ -257,7 +259,7 @@ Antigravity 排错：Responses、工具和图片请求都通过 CLIProxyAPI 的�
 
 Qoder 读取实际响应的 `userQuota`（套餐 Credits）与 `orgResourcePackage`（组织资源包）；比率优先按 used / total 或 cap 计算。未知额度不伪装为有效余额。Kimi 的 HTTP 200 空对象只表示官方未返回额度，不能断言无套餐或余额为零；界面显示未知，兼容 Code 官方 quota.usages 中的 5h / 7d / 月度比例窗口。通用名称“Kimi”不能识别重复账号，不据此建议删除凭据。
 
-Cursor 使用 `@cursor/sdk` 1.0.31 的官方浏览器授权，创建名为 token-flowb 的独立 SDK Key，默认有效期以官方 SDK 为准。桌面版将该账号保存到 safeStorage 加密文件 `secrets/cursor-account.bin`；不读取或改写 Cursor IDE 登录。模型列表按账号调用 `Cursor.models.list()`，不硬编码。官方 SDK 没有账户剩余额度接口，卡片提供官方用量页，调用 token 在本应用 API 总览记账。无返回用量时维持既有未知用量保护，绝不估算成零。
+Cursor 使用 `@cursor/sdk` 1.0.31 的官方浏览器授权，创建名为 token-flow 的独立 SDK Key，默认有效期以官方 SDK 为准。桌面版将该账号保存到 safeStorage 加密文件 `secrets/cursor-account.bin`；不读取或改写 Cursor IDE 登录。模型列表按账号调用 `Cursor.models.list()`，不硬编码。官方 SDK 没有账户剩余额度接口，卡片提供官方用量页，调用 token 在本应用 API 总览记账。无返回用量时维持既有未知用量保护，绝不估算成零。
 
 Cursor 文本来源通过主网关 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 调用，仍校验客户端 Key、模型、协议、源账号和 token 预算；内部 sidecar 的 8317 直连不包含 Cursor。创建临时空目录，显式 `tools: []`、空 MCP/子 Agent、`settingSources: []`，完成后清理会话文件。不提供本机文件或 shell 权限。
 
@@ -269,8 +271,18 @@ Cursor 文本来源通过主网关 `/v1/responses`、`/v1/chat/completions`、`/
 
 模型中心默认显示紧凑的账号与额度概览，点击提供商展开管理。A2A 目标现包含 Qoder IDE 的官方自定义模型接入引导：生成源账号绑定 Key，再在 Qoder Settings → Models 添加 OpenAI Compatible / Chat Completions 模型；原生账号登录保留。Qoder CLI 使用其 `/model → Custom` 向导，能力以版本和账号目录为准。详情与验证边界见 [本轮验证记录](artifacts/model-center/review.md)。
 
-指定维修师傅后，自动接入 Codex / Claude Code / WorkBuddy 会触发一次只读 review，核对配置、辅助模型、Key 授权、源账号和备份。检查失败不撤销已完成的接入；首页“请师傅复查”可重试，任务调试中可继续追问，当前应用会话保留上下文（重启不保存维修聊天）。支持停止检查和新开对话。每次写入授权独立，自动 review 不授予修改权限。配置检查不等于真实模型调用成功；Qoder 的手动添加结果尚不可自动读取。
+指定维修师傅后，自动接入 Codex / Claude Code / WorkBuddy 会触发一次只读 review，核对配置、辅助模型、Key 授权、源账号和备份。检查失败不撤销已完成的接入；首页“请师傅复查”可重试，在网关维修中可继续追问，当前应用会话保留上下文（重启不保存维修聊天）。支持停止检查和新开对话。自动 review 可以提出维修方案，默认等待人工审批；只有用户主动开启“替我审批”后，指定模型通过的方案才会执行。配置检查不等于真实模型调用成功；Qoder 的手动添加结果尚不可自动读取。
 
 Qoder 模型名称：保留网关目录返回的 `display_name`，在模型中心、A2A 选择、维修选择、Key 模型权限和手动接入选择中展示 `qoder/具体名称`（例如 `qoder/Kimi-K3`）。名称不是新的 API 别名；配置与授权始终使用原调用 ID（例如 `qoder/kmodel_latest`），模型中心悬停可查看。`/v1/models` 同时返回原 `id` 与 `display_name`。不硬编码名称映射，缺少名称时回退原 ID；Auto/Ultimate 等仍按目录中的档位展示。
 
-启动同步与共享数据目录：开发版与发布版使用相同的目录选择规则，优先复用已有的 token-flowb / desktop-browser-agent / Browser Agent 授权目录；`AGENT_DATA_ROOT` 仍可用于隔离测试。启动时读取授权池并导入受支持的本地 OAuth，已存在的池凭据不被旧副本覆盖。模型目录延迟注册或别名注册失败时自动重试，正常运行每 30 秒同步；停止网关时取消重试。界面分别更新网关授权与辅助工具状态，浏览器接口异常不再阻塞授权显示。额度圆环表示剩余比例，未知额度为灰色虚线，不视作满额或耗尽。
+启动同步与共享数据目录：开发版与发布版使用相同的目录选择规则，优先复用已有的 token-flow / token-flowb / desktop-browser-agent / Browser Agent 授权目录；`AGENT_DATA_ROOT` 仍可用于隔离测试。启动时读取授权池并导入受支持的本地 OAuth，已存在的池凭据不被旧副本覆盖。模型目录延迟注册或别名注册失败时自动重试，正常运行每 30 秒同步；停止网关时取消重试。界面分别更新网关授权与辅助工具状态，浏览器接口异常不再阻塞授权显示。额度圆环表示剩余比例，未知额度为灰色虚线，不视作满额或耗尽。
+
+WorkBuddy 接入写入原生根数组格式的 `~/.workbuddy/models.json`，保留已有模型。已安装客户端的硬件检查清理逻辑会将对象格式转换为空数组，因此不再生成该格式；含额外顶层设置的对象会停止转换，避免丢字段。A2A 分别显示选择模型、接入记录与实际配置状态；切换模型通过审批生成新记录和 Key，撤销旧 Key，保留最初接口备份及替换前配置。
+
+额度恢复：账号授权持久化在应用数据目录的 `cliproxy/auth`，启动网关后重新加载，不依赖辅助浏览器。额度需要在线查询；查询失败保留本次运行中上次成功的额度窗口并标注历史时间，不作为当前额度参与来源排序。重启不从磁盘恢复额度快照，会重新查询。额度桥接返回 5xx 时提示额度上游连接失败，不再误报 OAuth 回调端口冲突；真实网关端口占用仍由启动检查拒绝接管。
+
+### Codex 多账号切换
+
+辅助工具中的「多账号切换」会读取本地池内的 Codex 授权及额度，选择账号与默认模型后，将完整 OAuth 凭据写入 `CODEX_HOME/auth.json`，并将用户配置设为 OpenAI / 文件认证。原钥匙串保持不变；原认证文件与配置以仅当前用户可读的备份保存，可在同页还原。切换不会删除或禁用本地池中的账号，也不改变其他 Agent 的接入。
+
+缺少刷新凭据的账号需重新授权。已受 A2A 管理的 Codex 必须先还原接口。运行中只在用户确认后写入，完成后需重启 Codex；项目设置、启动参数和系统管理策略仍可能覆盖用户级配置。页面显示的是已写入的本机登录，不代表现有进程已加载新账号。测试使用隔离目录，未自动替换真实用户登录。

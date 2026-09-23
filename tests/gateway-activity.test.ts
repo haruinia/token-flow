@@ -17,7 +17,7 @@ it('keeps unreported token usage unknown and handles regular JSON',async()=>{
 });
 it('generates scoped custom-provider configs with protocol-correct URLs and safe quoting',()=>{
  const codex=agentConfig('codex','http://127.0.0.1:9527','codex/gpt-5.6-sol');
- expect(codex).toContain('wire_api="responses"');expect(codex).toContain('env_key="TOKEN_FLOWB_KEY"');expect(codex).toContain('supports_websockets=false');
+ expect(codex).toContain('wire_api="responses"');expect(codex).toContain('env_key="TOKEN_FLOW_KEY"');expect(codex).toContain('supports_websockets=false');
  const claude=agentConfig('claude','http://127.0.0.1:9527','codex/gpt-5.6-sol');
  expect(claude).toContain("ANTHROPIC_BASE_URL='http://127.0.0.1:9527'");expect(claude).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL');
  expect(agentConfig('claude','http://127.0.0.1:9527',"codex/a'b",true)).toContain("codex/a''b");

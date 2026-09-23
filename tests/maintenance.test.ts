@@ -6,7 +6,7 @@ import type {AssistantMessage,TranscriptContext} from '@earendil-works/pi-ai';
 import type {StreamFn} from '@earendil-works/pi-agent-core';
 import {GatewayMaintenance} from '../packages/core/src/gateway-maintenance.js';
 const transport={baseURL:'http://127.0.0.1:8317/v1',apiKey:'private-fixture-key',authID:'account.json'};
-function answer(content:AssistantMessage['content'],error=false){const s=createAssistantMessageEventStream();const message:AssistantMessage={role:'assistant',content,api:'openai-responses',provider:'token-flowb',model:'qoder/test',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:error?'error':content.some(c=>c.type==='toolCall')?'toolUse':'stop',timestamp:Date.now(),...(error?{errorMessage:'private-fixture-key RAW UPSTREAM ERROR'}:{})};if(error)s.push({type:'error',reason:'error',error:message});else s.push({type:'done',reason:message.stopReason as 'stop'|'toolUse',message});s.end(message);return s;}
+function answer(content:AssistantMessage['content'],error=false){const s=createAssistantMessageEventStream();const message:AssistantMessage={role:'assistant',content,api:'openai-responses',provider:'token-flow',model:'qoder/test',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:error?'error':content.some(c=>c.type==='toolCall')?'toolUse':'stop',timestamp:Date.now(),...(error?{errorMessage:'private-fixture-key RAW UPSTREAM ERROR'}:{})};if(error)s.push({type:'error',reason:'error',error:message});else s.push({type:'done',reason:message.stopReason as 'stop'|'toolUse',message});s.end(message);return s;}
 it('uses the actual Pi loop, retains follow-up context and never carries write authorization into the next question',async()=>{
  const root=await mkdtemp(join(tmpdir(),'pi-care-'));let turns=0,restores=0,inspects=0;const contexts:TranscriptContext[]=[];
  const stream:StreamFn=(_m,c)=>{contexts.push(structuredClone(c));turns++;return turns%2===1?answer([{type:'toolCall',id:`call${turns}`,name:'restore_connection',arguments:{id:randomUUID()}}]):answer([{type:'text',text:'已依据检查结果回答'}]);};
@@ -19,7 +19,7 @@ it('redacts provider failures and caps an endless tool loop',async()=>{
  const root=await mkdtemp(join(tmpdir(),'pi-limits-'));let turns=0;
  const care=new GatewayMaintenance(root,()=>++turns===1?answer([],true):answer([{type:'toolCall',id:`call${turns}`,name:'inspect_gateway',arguments:{}}]));
  const actions={inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({})};
- try{await care.select({sourceId:'account',model:'qoder/test'});care.start('检查',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('failed');expect(JSON.stringify(care.snapshot())).not.toContain('private-fixture-key');care.start('循环检查',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('failed');expect(turns).toBe(4);expect(care.snapshot().messages.at(-1)?.text).toContain('上限');}finally{await care.close();await rm(root,{recursive:true,force:true});}
+ try{await care.select({sourceId:'account',model:'qoder/test'});care.start('检查',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('failed');expect(JSON.stringify(care.snapshot())).not.toContain('private-fixture-key');care.start('循环检查',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('failed');expect(turns).toBe(9);expect(care.snapshot().messages.at(-1)?.text).toContain('上限');}finally{await care.close();await rm(root,{recursive:true,force:true});}
 });
 it('stops during preflight without starting a late model request, and blocks overlapping runs',async()=>{
  const root=await mkdtemp(join(tmpdir(),'pi-stop-'));let calls=0;let release!:()=>void;const pending=new Promise<void>(r=>release=r);
@@ -37,4 +37,24 @@ it('classifies upstream failures without exposing secrets and starts fresh after
  const care=new GatewayMaintenance(root,(_m,context)=>{if(++turns===1)throw new Error('403 private-fixture-key provider body');expect(JSON.stringify(context)).not.toContain('first broken prompt');return answer([{type:'text',text:'OK'}]);});
  const actions={inspect:async()=>({}),refresh:async()=>({}),restore:async()=>({})};
  try{await care.select({sourceId:'account',model:'qoder/test'});care.start('first broken prompt',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('failed');expect(care.snapshot().readiness.message).toContain('403');expect(JSON.stringify(care.snapshot())).not.toContain('private-fixture-key');care.start('new inspection',transport,actions);await expect.poll(()=>care.snapshot().status).toBe('completed');expect(turns).toBe(2);}finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('lets Pi recover from a failed preflight and failed tool, and clears context when switching A2A chains',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-chain-'));let turns=0,inspects=0;
+ const first={target:'workbuddy' as const,sourceId:'source-one',model:'qoder/one'};const second={target:'claude' as const,sourceId:'source-two',model:'codex/two'};
+ const care=new GatewayMaintenance(root,(_model,context)=>{
+  turns++;const text=JSON.stringify(context);
+  if(turns===1){expect(text).toContain('inspectionFailed');expect(text).toContain('qoder/one');return answer([{type:'toolCall',id:'refresh',name:'refresh_gateway',arguments:{}}]);}
+  if(turns===2){expect(text).toContain('refresh failed');return answer([{type:'toolCall',id:'inspect',name:'inspect_gateway',arguments:{}}]);}
+  if(turns===3){expect(text).toContain('recovered');return answer([{type:'text',text:'已重新检查链路'}]);}
+  expect(text).toContain('codex/two');expect(text).not.toContain('qoder/one');return answer([{type:'text',text:'已检查新链路'}]);
+ });
+ const actions={inspect:async()=>{if(++inspects===1)throw new Error('offline');return {recovered:true};},refresh:async()=>{throw new Error('refresh failed');},restore:async()=>({})};
+ try{await care.select({sourceId:'repair',model:'qoder/test'});care.start('自动诊断',transport,actions,false,first);await expect.poll(()=>care.snapshot().status).toBe('completed');expect(turns).toBe(3);expect(care.snapshot().chain).toEqual(first);care.start('自动诊断另一条',transport,actions,false,second);await expect.poll(()=>care.snapshot().status).toBe('completed');expect(turns).toBe(4);expect(care.snapshot().chain).toEqual(second);}finally{await care.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('reviews exact proposal IDs with the selected approval model and no tools',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'pi-approval-'));let wrong=false;const proposal={id:randomUUID(),code:'bounded repair'};
+ const care=new GatewayMaintenance(root,(model,context)=>{expect(model.id).toBe('codex/approver');expect(JSON.stringify(context)).not.toContain('inspect_gateway');return answer([{type:'text',text:JSON.stringify({id:wrong?'wrong':proposal.id,decision:'approve',reason:'checked'})}]);});
+ try{const result=await care.reviewProposal(proposal,{sourceId:'approver',model:'codex/approver'},transport);expect(result.reviewer).toBe('codex/approver');wrong=true;await expect(care.reviewProposal(proposal,{sourceId:'approver',model:'codex/approver'},transport)).rejects.toThrow();}finally{await care.close();await rm(root,{recursive:true,force:true});}
 });

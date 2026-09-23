@@ -48,7 +48,7 @@ export class CursorProvider {
   const login:CursorLogin={id:randomUUID(),provider:'cursor',flow:'device',status:'starting',message:'正在准备 Cursor 官方授权…'};this.login=login;
   const timer=setTimeout(()=>controller.abort(),300000);
   this.loginTask=(async()=>{try{
-   const {Cursor}=await this.sdk();const result=await Cursor.auth.login({store:null,backendUrl:'https://api2.cursor.sh',websiteUrl:'https://cursor.com',apiKeyName:'token-flowb',signal:controller.signal,openBrowser:false,onLoginUrl:raw=>{
+   const {Cursor}=await this.sdk();const result=await Cursor.auth.login({store:null,backendUrl:'https://api2.cursor.sh',websiteUrl:'https://cursor.com',apiKeyName:'token-flow',signal:controller.signal,openBrowser:false,onLoginUrl:raw=>{
     const url=new URL(raw);if(url.protocol!=='https:'||url.hostname!=='cursor.com'||url.pathname!=='/loginDeepControl')throw failure('Cursor 授权地址不合法');
     login.url=url.href;login.status='waiting_for_browser';login.message='请在 Cursor 官方页面授权；此操作会创建独立 SDK Key。';
     void this.openExternal?.(url.href).catch(()=>{});

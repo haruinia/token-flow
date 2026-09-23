@@ -14,7 +14,7 @@ beforeEach(()=>{
 async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'cursor-test-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));const values=new Map<string,string>();const secrets={get:async(name:string)=>values.get(name)??'',set:async(name:string,value:string)=>{values.set(name,value);}};return {root,values,secrets};}
 it('uses official login with independent credentials, discovers real account models and keeps secrets out of snapshots',async()=>{
  const {root,values,secrets}=await setup();const opened:string[]=[];const provider=new CursorProvider(root,secrets,async url=>{opened.push(url);});await provider.load();await provider.beginLogin();await expect.poll(()=>provider.snapshot().login?.status).toBe('completed');
- expect(opened[0]).toMatch(/^https:\/\/cursor.com\/loginDeepControl/);expect(sdk.login.mock.calls[0][0]).toMatchObject({store:null,backendUrl:'https://api2.cursor.sh',apiKeyName:'token-flowb'});
+ expect(opened[0]).toMatch(/^https:\/\/cursor.com\/loginDeepControl/);expect(sdk.login.mock.calls[0][0]).toMatchObject({store:null,backendUrl:'https://api2.cursor.sh',apiKeyName:'token-flow'});
  expect(values.get('cursor-account')).toContain('cursor-secret-fixture');expect(JSON.stringify(provider.snapshot())).not.toContain('cursor-secret-fixture');expect(provider.snapshot().models[0].id).toBe('cursor/fixture-model');
  const reopened=new CursorProvider(root,secrets);await reopened.load();expect(reopened.snapshot().accounts[0].id).toBe(provider.id);await reopened.setEnabled(false);expect(reopened.snapshot().models).toEqual([]);expect(values.get('cursor-account')).toContain('cursor-secret-fixture');await reopened.remove();expect(values.get('cursor-account')).toBe('');
 });

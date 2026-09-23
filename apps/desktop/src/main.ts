@@ -13,9 +13,9 @@ const here=dirname(fileURLToPath(import.meta.url));
 const profile=resolveProfile(app.getPath('appData'),process.env.AGENT_DATA_ROOT);
 mkdirSync(profile,{recursive:true,mode:0o700});
 app.setPath('userData',profile);
-app.setName('token-flowb');
+app.setName('token-flow');
 if(!app.requestSingleInstanceLock()) app.quit();
-else { void start().catch(error=>{dialog.showErrorBox('token-flowb 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
+else { void start().catch(error=>{dialog.showErrorBox('token-flow 启动失败',error instanceof Error?error.message:String(error));app.exit(1);}); }
 async function start() {
   let window:BrowserWindow|undefined;
   let closing=false;
@@ -43,7 +43,7 @@ async function start() {
   await session.defaultSession.cookies.set({url:address,name:'agent_session',value:token,httpOnly:true,sameSite:'strict',path:'/'});
   const show=async()=>{
     if(window){if(window.isMinimized())window.restore();window.show();window.focus();return;}
-    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#ffffff',title:'token-flowb',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({width:1320,height:900,minWidth:900,minHeight:640,show:false,backgroundColor:'#ffffff',title:'token-flow',icon,...(process.platform==='darwin'?{titleBarStyle:'hiddenInset' as const,trafficLightPosition:{x:20,y:20}}:{}),webPreferences:{preload:join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
     window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==address)event.preventDefault();});
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));

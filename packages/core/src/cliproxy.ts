@@ -1,3 +1,4 @@
+import { readConfig } from './agent-connections.js';
 import { CursorProvider,cursorCatalog } from './cursor.js';
 // Router 层：受管 CLIProxyAPI 进程、管理接口、已保存账号与模型路由表。
 // 对话层始终发送 Responses 请求到 127.0.0.1:<port>/v1；CLIProxyAPI 按模型转换为各家协议，
@@ -18,7 +19,7 @@ export type { AccountQuota, QuotaWindow } from './quota/index.js';
 
 const accountSchema = z.object({
   id: z.string().optional(), name: z.string(), provider: z.string().optional(), type: z.string().optional(),
-  email: z.string().optional(), label: z.string().optional(), status: z.string().optional(),
+  status_message: z.string().optional(), email: z.string().optional(), label: z.string().optional(), status: z.string().optional(),
   disabled: z.boolean().optional(), unavailable: z.boolean().optional(),
   // 额度查询所需的非敏感字段；auth_index 只留在进程内，不进快照。
   auth_index: z.union([z.string(), z.number()]).optional(), project_id: z.string().optional(), account_type: z.string().optional(),
@@ -26,6 +27,7 @@ const accountSchema = z.object({
 });
 const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional()});
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
+export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
 export type LocalAccount = {id: string; provider: string; label: string; status: string; disabled: boolean; unavailable: boolean; isDuplicate?: boolean; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
 export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor';textOnly?:boolean};
@@ -111,7 +113,8 @@ export class CLIProxyManager {
     }).catch(() => {throw new Error('无法连接 Local Agent，请检查服务状态后重试。');});
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`Local Agent 接口请求失败（HTTP ${response.status}）。请重试；登录启动失败也可能是 1455 / 54545 / 51121 回调端口被占用。`);
+      if(path==='/api-call')throw new Error(response.status>=500?`额度上游连接失败（HTTP ${response.status}），网关已响应。请稍后重试或检查网络与代理；不代表账号授权丢失。`:`额度查询网关请求失败（HTTP ${response.status}），请刷新网关状态后重试。`);
+      throw new Error(`Local Agent 接口请求失败（HTTP ${response.status}）。请检查网关状态后重试。`);
     }
     return response.json().catch(() => {throw new Error('Local Agent 返回了无效响应，请重启服务后重试。');});
   }
@@ -219,6 +222,18 @@ export class CLIProxyManager {
     if (this.state !== 'running') throw new Error('请先启动 Local Agent');
     try {
       const result = z.object({files: z.array(accountSchema)}).parse(await this.request('/auth-files'));
+      // Only explicit terminal OAuth refresh errors prove revocation; quota 401/403 and duplicate labels do not.
+      const removed=new Set<string>();
+      for(const file of result.files.filter(revokedCredential)){
+        if(file.name.includes('/')||file.name.includes('\\'))continue;
+        try{
+          const raw=await readConfig(join(this.root,'cliproxy','auth',file.name));if(raw===null)continue;
+          const archive=join(this.root,'revoked-credentials');await mkdir(archive,{recursive:true,mode:0o700});await chmod(archive,0o700);
+          await writeFile(join(archive,`${createHash('sha256').update(file.name+raw).digest('hex')}.json`),raw,{mode:0o600});
+          await this.request(`/auth-files?name=${encodeURIComponent(file.name)}`,'DELETE');removed.add(file.name);
+        }catch{/* Keep the credential if archival or removal fails; never log its contents. */}
+      }
+      result.files=result.files.filter(file=>!removed.has(file.name));
       const names = new Map<string, string>();
       const authIDs = new Map<string,string>();
       const quotaTargets = new Map<string, {authIndex: string; account: QuotaAccount}>();
@@ -344,12 +359,38 @@ export class CLIProxyManager {
       throw Object.assign(new Error('源账号或模型当前不可用，请刷新授权；不会切换到其他账号。'),{statusCode:409});
     return authID;
   }
+  async codexNativeAccounts() {
+    return Promise.all(this.accounts.filter(a=>a.provider==='codex'&&!a.disabled&&!a.unavailable).map(async account=>{
+      try{
+        const name=this.names.get(account.id);
+        if(!name||name.includes('/')||name.includes('\\'))throw new Error();
+        const raw=JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null');
+        const complete=['access_token','refresh_token','id_token','account_id'].every(k=>typeof raw?.[k]==='string'&&raw[k].length>0);
+        return {id:account.id,accountId:typeof raw?.account_id==='string'?raw.account_id:null,switchable:complete,reason:complete?'':'缺少完整登录凭据，请重新授权'};
+      }catch{return {id:account.id,accountId:null,switchable:false,reason:'授权文件暂不可读取'};}
+    }));
+  }
+  // Server-only export for native Codex login switching. Never include credentials in snapshots.
+  async codexCredential(id:string,model:string) {
+    this.sourceAuth(id,model);
+    const account=this.accounts.find(a=>a.id===id);
+    const name=this.names.get(id);
+    if(account?.provider!=='codex'||!name||name.includes('/')||name.includes('\\'))throw new Error('请选择有效的 Codex 账号');
+    try{return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;}
+    catch{throw new Error('读取账号授权失败，请重新连接该账号。');}
+  }
   async importCredential(provider:'codex'|'claude',credential:Record<string,unknown>,onlyNew=false) {
     await this.start();
     const identity=String(credential.account_id||credential.email||credential.access_token);
     const name=`local-${provider}-${createHash('sha256').update(identity).digest('hex').slice(0,16)}.json`;
     if(onlyNew){
       if([...this.names.values()].includes(name))return this.snapshot();
+      // A browser login and a native import use different filenames for the same Codex account.
+      if(provider==='codex'&&typeof credential.account_id==='string'){
+        for(const account of await this.codexNativeAccounts()){
+          if(account.accountId===credential.account_id&&account.switchable)return this.snapshot();
+        }
+      }
     }
     await this.request(`/auth-files?name=${encodeURIComponent(name)}`,'POST',{...credential,type:provider});
     return this.refreshAccounts();
@@ -402,7 +443,9 @@ export class CLIProxyManager {
             : error instanceof z.ZodError ? '上游 api-call 响应格式异常。'
             : error instanceof Error ? error.message : '额度查询失败。';
           if (!this.names.has(account.id)) return;
-          this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: [], error: message.slice(0, 300)};
+          const previous=this.quotas[account.id];
+          const lastSuccessfulAt=previous?.status==='ok'?previous.observedAt:previous?.lastSuccessfulAt;
+          this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: message.slice(0, 300)};
         }
       }));
       await this.cursor.refresh();

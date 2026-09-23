@@ -12,5 +12,5 @@ const service=await createDesktopService({root,token,localKey,proxyPort:process.
 await writeFile(tokenPath,token,{mode:0o600});
 await writeFile(cliproxyKeyPath,localKey,{mode:0o600});
 const address=await service.app.listen({host:'127.0.0.1',port:Number(process.env.AGENT_PORT??9527)});
-console.log(`token-flowb API: ${address}\nWorkspace token: ${tokenPath}\nLocal Agent key: ${cliproxyKeyPath}\nUse npm start for the authenticated desktop UI.`);
+console.log(`token-flow API: ${address}\nWorkspace token: ${tokenPath}\nLocal Agent key: ${cliproxyKeyPath}\nUse npm start for the authenticated desktop UI.`);
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{void service.app.close().then(()=>process.exit(0));});

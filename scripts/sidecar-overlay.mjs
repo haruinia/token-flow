@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 export function sidecarOverlay(test=false){
 // Build from maintained patches without rewriting the upstream checkout.
-const patchDir=mkdtempSync(join(tmpdir(),'token-flowb-sidecar-'));
+const patchDir=mkdtempSync(join(tmpdir(),'token-flow-sidecar-'));
 const source=resolve('upstream/CLIProxyAPI/sdk/api/handlers/handlers.go');
 const original=readFileSync(source,'utf8');
 const anchor='meta := make(map[string]any)';
 if(!original.includes(anchor))throw new Error('Upstream routing hook changed; inspect before building.');
 const patched=join(patchDir,'handlers.go');
-writeFileSync(patched,original.replace(anchor,anchor+'\n\tif ginCtx != nil {\n\t\tif selected := strings.TrimSpace(ginCtx.GetHeader("X-Token-Flowb-Auth")); selected != "" {\n\t\t\tmeta[coreexecutor.PinnedAuthMetadataKey] = selected\n\t\t}\n\t}'));
+writeFileSync(patched,original.replace(anchor,anchor+'\n\tif ginCtx != nil {\n\t\tif selected := strings.TrimSpace(ginCtx.GetHeader("X-Token-Flow-Auth")); selected != "" {\n\t\t\tmeta[coreexecutor.PinnedAuthMetadataKey] = selected\n\t\t}\n\t}'));
 const replacements={
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/agent_responses.go')]:resolve('patches/cliproxy/agent_responses.go'),
  [resolve('upstream/CLIProxyAPI/internal/runtime/executor/workbuddy_executor.go')]:resolve('patches/cliproxy/workbuddy_executor.go'),
@@ -21,7 +21,7 @@ const replacements={
 // names so the overlay replaces them rather than registering duplicate tests.
 if(test){
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/workbuddy_wire_test.go')]=resolve('tests/sidecar/workbuddy_wire_test.go');
- replacements[resolve('upstream/CLIProxyAPI/sdk/api/handlers/token_flowb_pin_test.go')]=resolve('tests/sidecar-pin.go');
+ replacements[resolve('upstream/CLIProxyAPI/sdk/api/handlers/token_flow_pin_test.go')]=resolve('tests/sidecar-pin.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/qoder_claude_test.go')]=resolve('tests/sidecar/qoder_claude_test.go');
  replacements[resolve('upstream/CLIProxyAPI/internal/runtime/executor/helps/qoder_protocol_test.go')]=resolve('tests/sidecar/qoder_protocol_test.go');
 }

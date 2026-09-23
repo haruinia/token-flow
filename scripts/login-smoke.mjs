@@ -12,7 +12,7 @@ let app;
 try {
   const packaged = process.argv.includes('--packaged');
   app = await electron.launch({args: packaged ? [] : ['.'],
-    ...(packaged ? {executablePath: resolve('release/mac-arm64/token-flowb.app/Contents/MacOS/token-flowb')} : {}),
+    ...(packaged ? {executablePath: resolve('release/mac-arm64/token-flow.app/Contents/MacOS/token-flow')} : {}),
     env: {...process.env, AGENT_DATA_ROOT: root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'), AGENT_PORT: '0', AGENT_PROXY_PORT: String(port), CLIPROXY_BINARY: resolve('tests/fixtures/fake-cliproxy.mjs')},
   });
   // Only the test process intercepts shell.openExternal. Production always uses the real browser.

@@ -53,7 +53,7 @@ export class GatewayKeys {
   create(input: z.infer<typeof gatewayKeyInput>) {
     return this.mutate(entries => {
       if (entries.length >= 100) throw Object.assign(new Error('最多创建 100 个客户端 Key'), {statusCode:400});
-      const apiKey = `tfb_${randomBytes(32).toString('hex')}`;
+      const apiKey = `tfl_${randomBytes(32).toString('hex')}`;
       const entry:StoredKey = {...input,usedTokens:0,unmeteredRequests:0,pending:[], id:randomUUID(), prefix:apiKey.slice(0,12), digest:hash(apiKey).toString('hex'), createdAt:new Date().toISOString()};
       entries.push(entry);
       return {key:publicKey(entry), apiKey};

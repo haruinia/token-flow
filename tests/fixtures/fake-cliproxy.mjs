@@ -42,7 +42,7 @@ const server = createServer(async(req,res) => {
  }
  if(['/responses','/responses/compact','/messages','/messages/count_tokens','/chat/completions'].includes(path)) {
   let body='';for await(const c of req)body+=c;const input=JSON.parse(body);
-  const account=accounts.find(a=>!a.disabled&&(!req.headers['x-token-flowb-auth']||a.name===req.headers['x-token-flowb-auth'])&&accountModels(a).some(m=>m.id===input.model));
+  const account=accounts.find(a=>!a.disabled&&(!req.headers['x-token-flow-auth']||a.name===req.headers['x-token-flow-auth'])&&accountModels(a).some(m=>m.id===input.model));
   if(!account)return send(404,{error:'model unavailable'});
   if(fixtureMode==='region-restricted')return send(400,{error:{message:'User location is not supported for the API use.',debug:'upstream-secret-never-expose'}});
   if(path==='/messages/count_tokens')return send(200,{input_tokens:7});
@@ -94,6 +94,7 @@ const server = createServer(async(req,res) => {
  if(path==='/get-auth-status'){const s=sessions.get(url.searchParams.get('state'));return send(200,{status:s?.status??'error',error:'opaque-error-secret-never-expose'});}
  if(path==='/oauth-session'){const s=sessions.get(url.searchParams.get('state'));const cancelled=s?.status==='wait';if(cancelled){s.status='error';cancelCount++;}return send(200,{status:'ok',cancelled});}
  if(path==='/api-call') {
+  if(fixtureMode==='quota-bridge-error')return send(502,{error:'upstream-secret network failed'});
   // Stands in for provider usage endpoints. $TOKEN$ must be substituted upstream, never sent by the desktop.
   let body='';for await(const c of req)body+=c;const input=JSON.parse(body);apiCalls.push({authIndex:input.auth_index,url:input.url,rawToken:Object.values(input.header??{}).some(v=>String(v).includes('$TOKEN$'))});
   if(fixtureMode==='quota-empty'&&input.url.includes('api.kimi.com'))return replyEmpty();

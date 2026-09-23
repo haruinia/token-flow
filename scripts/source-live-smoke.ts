@@ -22,7 +22,7 @@ for(const file of await readdir(authDir)){
  try{const value=JSON.parse(await readFile(join(authDir,file),'utf8'));if(value.type===provider&&value.access_token&&!value.disabled){credential=value;break;}}catch{/* Unrelated auth files. */}
 }
 if(!credential)throw new Error('No saved active source credential.');
-const root=await mkdtemp(join(await realpath(tmpdir()),'token-flowb-source-live-'));
+const root=await mkdtemp(join(await realpath(tmpdir()),'token-flow-source-live-'));
 const nativeFetch=globalThis.fetch;
 let service:Awaited<ReturnType<typeof createDesktopService>>|undefined;
 try{

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import assert from 'node:assert/strict';
-const root=await mkdtemp(join(tmpdir(),'token-flowb-actions-'));
+const root=await mkdtemp(join(tmpdir(),'token-flow-actions-'));
 const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));
 let app;
 try {
@@ -14,7 +14,7 @@ try {
   {name:'codex.json',provider:'codex',email:'active@example.test',status:'active',auth_index:'idx-codex',models:['gpt-5.6-sol']},
  ]));
  const packaged=process.argv.includes('--packaged');
- app=await electron.launch({args:packaged?[]:['.'],...(packaged?{executablePath:resolve('release/mac-arm64/token-flowb.app/Contents/MacOS/token-flowb')}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(port),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
+ app=await electron.launch({args:packaged?[]:['.'],...(packaged?{executablePath:resolve('release/mac-arm64/token-flow.app/Contents/MacOS/token-flow')}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(port),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')}});
  await app.evaluate(({clipboard})=>{globalThis.savedClipboard=clipboard.readText();});
  const page=await app.firstWindow();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.waitForFunction(()=>fetch('/api/local-agent').then(r=>r.json()).then(s=>s.accounts.length===2));

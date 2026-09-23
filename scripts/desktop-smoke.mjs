@@ -30,7 +30,7 @@ await new Promise((resolve,reject)=>{upstream.once('error',reject);upstream.list
 let app,browser;
 try{
  const packaged=process.argv.includes('--packaged');
- app=await electron.launch({args:packaged?[]:['.'],...(packaged?{executablePath:resolve('release/mac-arm64/token-flowb.app/Contents/MacOS/token-flowb')}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(proxyPort),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')},timeout:30000});
+ app=await electron.launch({args:packaged?[]:['.'],...(packaged?{executablePath:resolve('release/mac-arm64/token-flow.app/Contents/MacOS/token-flow')}:{}),env:{...process.env,AGENT_DATA_ROOT:root,CODEX_HOME:join(root,'codex'),CLAUDE_CONFIG_DIR:join(root,'claude'),WORKBUDDY_CONFIG_DIR:join(root,'workbuddy'),AGENT_PORT:'0',AGENT_PROXY_PORT:String(proxyPort),CLIPROXY_BINARY:resolve('tests/fixtures/fake-cliproxy.mjs')},timeout:30000});
  const page=await app.firstWindow();await page.waitForSelector('h1');
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.getByRole('button',{name:'任务调试',exact:true}).click();await page.getByRole('tab',{name:'浏览器任务',exact:true}).click();
