@@ -1,5 +1,7 @@
 # token-flow
 
+you jsut use agent，we will be token flow
+
 面向 Codex、Claude Code 和 OpenAI 兼容 Agent 的本地模型网关。认证各厂商账号，统一模型目录与 Responses API，再适配不同 Agent 的调用协议；以独立客户端 Key 管理共享权限。
 
 ## A2A 点选接入与网关维修
