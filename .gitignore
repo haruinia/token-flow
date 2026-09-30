@@ -13,3 +13,61 @@ artifacts/
 .env.*
 
 .ai-tracker
+
+# Local runtime data and copied account/configuration backups
+.local-notes/
+auth/
+secrets/
+agent-backups/
+gateway-context/
+runs/
+browser-profile/
+.codex/
+.claude/
+.workbuddy/
+auth.json
+.credentials.json
+gateway-keys.json
+api-token
+cliproxy-api-key
+*-account-backup.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Browser caches, diagnostics, and temporary exports
+.cache/
+.cache-*/
+Cache/
+Code Cache/
+GPUCache/
+Session Storage/
+Local Storage/
+logs/
+output/
+.playwright-cli/
+playwright-report/
+test-results/
+coverage/
+*.har
+*.log.*
+
+# Local application bundles and installers; never publish these
+releases/
+*.app/
+*.dmg
+*.pkg
+*.exe
+*.msi
+*.msix
+*.AppImage
+*.deb
+*.rpm
+*.asar
+*.zip
+*.7z

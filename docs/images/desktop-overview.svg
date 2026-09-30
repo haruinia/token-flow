@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="920" viewBox="0 0 1440 920" role="img" aria-labelledby="title desc">
+<title id="title">token-flow 桌面界面示意</title><desc id="desc">根据项目实际布局重新绘制。左侧管理模型与账号，中间选择示例来源，右侧选择目标 Agent。所有账号、模型及额度均为虚构，不能视为连接成功的证明。</desc>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#163978" flood-opacity="0.09"/></filter></defs>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+
+<rect x="0" y="0" width="1440" height="920" rx="0" fill="#edf2fb" stroke="none"/>
+<rect x="32" y="30" width="1376" height="826" rx="18" fill="white" filter="url(#shadow)"/>
+<rect x="32" y="30" width="1376" height="40" rx="18" fill="#fafbfe" stroke="none"/>
+<rect x="32" y="52" width="1376" height="18" rx="0" fill="#fafbfe" stroke="none"/>
+<circle cx="56" cy="50" r="5" fill="#f28b86"/>
+<circle cx="74" cy="50" r="5" fill="#edc56a"/>
+<circle cx="92" cy="50" r="5" fill="#7acba0"/>
+<text x="660" y="55" font-size="13" fill="#8290a7" font-weight="500">token-flow</text>
+<text x="1276" y="55" font-size="12" fill="#8290a7" font-weight="400">界面示意</text>
+<path d="M32 70H1408" stroke="#e8ecf3"/>
+<rect x="32" y="70" width="220" height="786" rx="0" fill="#f7f9fe" stroke="none"/>
+<svg x="52" y="99" width="40" height="40" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="19" fill="#2563eb"/><path d="M15 44V31c0-9 6-15 15-15h8" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"/><path d="M15 44h16c9 0 15-6 15-15v-7" fill="none" stroke="#88f0da" stroke-width="7" stroke-linecap="round"/><path d="M26 31h22M41 24l7 7-7 7" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<text x="104" y="119" font-size="22" fill="#1a263c" font-weight="700">token-flow</text>
+<text x="104" y="140" font-size="10" fill="#7a869c" font-weight="400">你的模型，流向每个 Agent</text>
+<rect x="50" y="172" width="184" height="40" rx="8" fill="#365fdf" stroke="none"/>
+<text x="66" y="198" font-size="14" fill="white" font-weight="600">＋ 连接厂商账号</text>
+<text x="56" y="250" font-size="11" fill="#96a1b2" font-weight="500">模型网关</text>
+<rect x="46" y="259" width="192" height="39" rx="8" fill="#eaf0ff" stroke="none"/>
+<g transform="translate(62 269)" fill="none" stroke="#4169d8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="284" font-size="14" fill="#355cc9" font-weight="600">A2A 接入</text>
+<g transform="translate(62 315)" fill="none" stroke="#8a97ac" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="330" font-size="14" fill="#7c889e" font-weight="400">API 总览</text>
+<g transform="translate(62 361)" fill="none" stroke="#8a97ac" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="376" font-size="14" fill="#7c889e" font-weight="400">模型中心</text>
+<g transform="translate(62 407)" fill="none" stroke="#8a97ac" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="422" font-size="14" fill="#7c889e" font-weight="400">Agent 接入</text>
+<g transform="translate(62 453)" fill="none" stroke="#8a97ac" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="468" font-size="14" fill="#7c889e" font-weight="400">API Keys</text>
+<text x="56" y="526" font-size="11" fill="#96a1b2" font-weight="500">辅助工具</text>
+<g transform="translate(62 546)" fill="none" stroke="#8390a6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="560" font-size="14" fill="#7c889e" font-weight="400">多账号切换</text>
+<g transform="translate(62 586)" fill="none" stroke="#8390a6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="600" font-size="14" fill="#7c889e" font-weight="400">网关维修</text>
+<g transform="translate(62 626)" fill="none" stroke="#8390a6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="640" font-size="14" fill="#7c889e" font-weight="400">执行历史</text>
+<g transform="translate(62 666)" fill="none" stroke="#8390a6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="92" y="680" font-size="14" fill="#7c889e" font-weight="400">联系我们</text>
+<path d="M52 738H232" stroke="#e8ecf3"/>
+<circle cx="64" cy="762" r="4" fill="#38a581"/>
+<text x="78" y="767" font-size="12" fill="#728098" font-weight="400">本机网关</text>
+<text x="184" y="767" font-size="11" fill="#48a080" font-weight="400">运行中</text>
+<text x="58" y="818" font-size="11" fill="#919daf" font-weight="400">演示数据 · 无真实账号</text>
+<path d="M252 70L252 856" stroke="#e8ecf3"/>
+<text x="282" y="107" font-size="15" fill="#253047" font-weight="600">A2A 接入</text>
+<rect x="376" y="88" width="113" height="26" rx="5" fill="#f8fafe" stroke="#ebeff6"/>
+<text x="387" y="105" font-size="10" fill="#8190a4" font-weight="400">token-flow / local</text>
+<circle cx="1203" cy="100" r="4" fill="#38a581"/>
+<text x="1216" y="105" font-size="11" fill="#758399" font-weight="400">网关运行中</text>
+<rect x="1304" y="85" width="80" height="30" rx="7" fill="#f9fbfe" stroke="#e9edf4"/>
+<text x="1318" y="105" font-size="11" fill="#77849a" font-weight="400">网关设置</text>
+<path d="M252 129H1408" stroke="#e8ecf3"/>
+<text x="288" y="182" font-size="28" fill="#1e293d" font-weight="700">让你的模型，流向每个 Agent。</text>
+<text x="288" y="212" font-size="14" fill="#8490a4" font-weight="400">连接账号，选择模型，把它交给你熟悉的开发工具。</text>
+<text x="1250" y="192" font-size="12" fill="#4e71d4" font-weight="400">登录其他 Agent ＋</text>
+<rect x="288" y="248" width="1080" height="74" rx="10" fill="#f9fbff" stroke="#e8eef9"/>
+<circle cx="320" cy="285" r="16" fill="#e8efff"/>
+<g transform="translate(313 275)" fill="none" stroke="#5478d8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="350" y="278" font-size="15" fill="#344057" font-weight="600">先指定一位维修师傅</text>
+<text x="350" y="300" font-size="12" fill="#8691a3" font-weight="400">接入遇到问题时，让我来帮你。</text>
+<rect x="1245" y="271" width="103" height="30" rx="7" fill="#fff" stroke="#dfe6f2"/>
+<text x="1259" y="291" font-size="11" fill="#677b9c" font-weight="400">指定维修师傅</text>
+<rect x="288" y="348" width="454" height="397" rx="14" fill="#fff" stroke="#e3e9f2"/>
+<text x="310" y="384" font-size="17" fill="#28354a" font-weight="600">点亮源 Agent</text>
+<text x="603" y="383" font-size="11" fill="#92a0b2" font-weight="400">选择账号与模型</text>
+<rect x="308" y="406" width="196" height="132" rx="9" fill="#f7f9ff" stroke="#7f9beb"/>
+<text x="322" y="432" font-size="15" fill="#3d4b62" font-weight="600">Codex</text>
+<text x="322" y="454" font-size="12" fill="#8793a6" font-weight="400">示例账号 A</text>
+<path d="M322 466H490" stroke="#e8ecf3"/>
+<circle cx="340" cy="493" r="17" fill="none" stroke="#e7efe9" stroke-width="3"/><circle cx="340" cy="493" r="17" fill="none" stroke="#78ba84" stroke-width="3" pathLength="100" stroke-dasharray="80 100" transform="rotate(-90 340 493)"/>
+<text x="329" y="497" font-size="11" fill="#62976d" font-weight="600">80</text>
+<text x="366" y="490" font-size="11" fill="#8b97a8" font-weight="400">示例额度</text>
+<text x="366" y="509" font-size="11" fill="#75a480" font-weight="400">剩余 80%</text>
+<text x="322" y="528" font-size="10" fill="#5978c6" font-weight="400">示例模型</text>
+<rect x="518" y="406" width="196" height="132" rx="9" fill="#fff" stroke="#e4e9f1"/>
+<text x="532" y="432" font-size="15" fill="#3d4b62" font-weight="600">Antigravity</text>
+<text x="532" y="454" font-size="12" fill="#8793a6" font-weight="400">示例账号 B</text>
+<path d="M532 466H700" stroke="#e8ecf3"/>
+<circle cx="550" cy="493" r="17" fill="none" stroke="#e7efe9" stroke-width="3"/><circle cx="550" cy="493" r="17" fill="none" stroke="#78ba84" stroke-width="3" pathLength="100" stroke-dasharray="65 100" transform="rotate(-90 550 493)"/>
+<text x="539" y="497" font-size="11" fill="#62976d" font-weight="600">65</text>
+<text x="576" y="490" font-size="11" fill="#8b97a8" font-weight="400">示例额度</text>
+<text x="576" y="509" font-size="11" fill="#75a480" font-weight="400">剩余 65%</text>
+<text x="532" y="528" font-size="10" fill="#a3abba" font-weight="400">示例模型</text>
+<rect x="308" y="555" width="196" height="132" rx="9" fill="#fff" stroke="#e4e9f1"/>
+<text x="322" y="581" font-size="15" fill="#3d4b62" font-weight="600">ZCode</text>
+<text x="322" y="603" font-size="12" fill="#8793a6" font-weight="400">示例账号 C</text>
+<path d="M322 615H490" stroke="#e8ecf3"/>
+<circle cx="340" cy="642" r="17" fill="none" stroke="#e7efe9" stroke-width="3"/><circle cx="340" cy="642" r="17" fill="none" stroke="#78ba84" stroke-width="3" pathLength="100" stroke-dasharray="50 100" transform="rotate(-90 340 642)"/>
+<text x="329" y="646" font-size="11" fill="#62976d" font-weight="600">50</text>
+<text x="366" y="639" font-size="11" fill="#8b97a8" font-weight="400">示例额度</text>
+<text x="366" y="658" font-size="11" fill="#75a480" font-weight="400">剩余 50%</text>
+<text x="322" y="677" font-size="10" fill="#a3abba" font-weight="400">示例模型</text>
+<rect x="518" y="555" width="196" height="132" rx="9" fill="#fff" stroke="#e4e9f1"/>
+<text x="532" y="581" font-size="15" fill="#3d4b62" font-weight="600">Trae</text>
+<text x="532" y="603" font-size="12" fill="#8793a6" font-weight="400">示例账号 D</text>
+<path d="M532 615H700" stroke="#e8ecf3"/>
+<circle cx="550" cy="642" r="17" fill="none" stroke="#e7efe9" stroke-width="3"/><circle cx="550" cy="642" r="17" fill="none" stroke="#78ba84" stroke-width="3" pathLength="100" stroke-dasharray="35 100" transform="rotate(-90 550 642)"/>
+<text x="539" y="646" font-size="11" fill="#62976d" font-weight="600">35</text>
+<text x="576" y="639" font-size="11" fill="#8b97a8" font-weight="400">示例额度</text>
+<text x="576" y="658" font-size="11" fill="#75a480" font-weight="400">剩余 35%</text>
+<text x="532" y="677" font-size="10" fill="#a3abba" font-weight="400">示例模型</text>
+<path d="M762 542h34m-10-10 10 10-10 10" fill="none" stroke="#8c9cbc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="816" y="348" width="552" height="397" rx="14" fill="#fff" stroke="#e3e9f2"/>
+<text x="838" y="384" font-size="17" fill="#28354a" font-weight="600">想在哪个 Agent 里用？</text>
+<rect x="838" y="406" width="238" height="74" rx="8" fill="#fff" stroke="#e4e9f1"/>
+<g transform="translate(852 423)" fill="none" stroke="#7185b2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="877" y="435" font-size="14" fill="#43516a" font-weight="600">Codex</text>
+<text x="877" y="457" font-size="11" fill="#9aa5b5" font-weight="400">Responses API</text>
+<rect x="1092" y="406" width="238" height="74" rx="8" fill="#f5f8ff" stroke="#839ee8"/>
+<g transform="translate(1106 423)" fill="none" stroke="#7185b2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="1131" y="435" font-size="14" fill="#43516a" font-weight="600">Claude Code</text>
+<text x="1131" y="457" font-size="11" fill="#9aa5b5" font-weight="400">Messages</text>
+<rect x="838" y="492" width="238" height="74" rx="8" fill="#fff" stroke="#e4e9f1"/>
+<g transform="translate(852 509)" fill="none" stroke="#7185b2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="877" y="521" font-size="14" fill="#43516a" font-weight="600">WorkBuddy</text>
+<text x="877" y="543" font-size="11" fill="#9aa5b5" font-weight="400">自定义模型</text>
+<rect x="1092" y="492" width="238" height="74" rx="8" fill="#fff" stroke="#e4e9f1"/>
+<g transform="translate(1106 509)" fill="none" stroke="#7185b2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 0v5m6-5v5M3 5h10v4a5 5 0 0 1-10 0V5zm5 9v5"/></g>
+<text x="1131" y="521" font-size="14" fill="#43516a" font-weight="600">Qoder 独立应用</text>
+<text x="1131" y="543" font-size="11" fill="#9aa5b5" font-weight="400">自定义供应商</text>
+<rect x="838" y="583" width="492" height="53" rx="8" fill="#fafbfe" stroke="#e8edf5"/>
+<text x="853" y="614" font-size="13" fill="#53627b" font-weight="600">Cursor</text>
+<text x="970" y="614" font-size="11" fill="#929eb0" font-weight="400">手动接入 · 需外网 HTTPS</text>
+<text x="838" y="663" font-size="12" fill="#8b97a9" font-weight="400">工具、审批和沙箱沿用目标客户端的设置。</text>
+<rect x="838" y="685" width="166" height="38" rx="8" fill="#3e66de" stroke="none"/>
+<text x="858" y="710" font-size="13" fill="#fff" font-weight="600">接入 Claude Code  →</text>
+<text x="1020" y="709" font-size="11" fill="#94a0b2" font-weight="400">原配置自动备份，可还原</text>
+<text x="288" y="791" font-size="12" fill="#6380bf" font-weight="600">连接来源</text>
+<text x="372" y="791" font-size="13" fill="#aab6cc" font-weight="400">→</text>
+<text x="405" y="791" font-size="12" fill="#6380bf" font-weight="600">选择模型</text>
+<text x="489" y="791" font-size="13" fill="#aab6cc" font-weight="400">→</text>
+<text x="522" y="791" font-size="12" fill="#6380bf" font-weight="600">接入 Agent</text>
+<text x="288" y="818" font-size="12" fill="#a0abbd" font-weight="400">模型中心 · 用量与额度 · 独立客户端 Key · 接入检查与还原</text>
+<text x="924" y="887" font-size="12" fill="#7d8ca5" font-weight="400">重新绘制的产品示意图 · 所有账号、模型和额度均为虚构</text>
+</g></svg>
