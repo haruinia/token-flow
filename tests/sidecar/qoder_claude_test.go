@@ -91,7 +91,7 @@ func TestQoderClaudeWireFormat(t *testing.T) {
 }
 
 func TestQoderToolCallAndInvalidStream(t *testing.T) {
-	for _, mode := range []string{"tool", "empty", "truncated", "json-error"} {
+	for _, mode := range []string{"tool", "empty", "truncated", "premature-done", "wrapped-done", "json-error"} {
 		t.Run(mode, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -111,7 +111,10 @@ func TestQoderToolCallAndInvalidStream(t *testing.T) {
 					envelope, _ := json.Marshal(map[string]string{"body": chunk})
 					fmt.Fprintf(w, "data: %s\n\n", envelope)
 				}
-				if mode == "tool" {
+				if mode == "wrapped-done" {
+					fmt.Fprint(w, "data: {\"body\":\"[DONE]\"}\n\n")
+				}
+				if mode == "tool" || mode == "premature-done" {
 					fmt.Fprint(w, "data: [DONE]\n\n")
 				}
 			}))
@@ -124,6 +127,22 @@ func TestQoderToolCallAndInvalidStream(t *testing.T) {
 			if mode != "tool" {
 				if err == nil {
 					t.Fatalf("invalid %s stream accepted: %s", mode, result.Payload)
+				}
+				stream, streamErr := exec.ExecuteStream(context.Background(), auth, req, opts)
+				if streamErr != nil {
+					t.Fatal(streamErr)
+				}
+				failed := false
+				for chunk := range stream.Chunks {
+					if chunk.Err != nil {
+						failed = true
+					}
+					if strings.Contains(string(chunk.Payload), "event: message_stop") {
+						t.Fatal("invalid stream fabricated completion")
+					}
+				}
+				if !failed {
+					t.Fatal("invalid streaming response accepted")
 				}
 				if strings.Contains(err.Error(), "private upstream") {
 					t.Fatal("upstream diagnostic exposed")

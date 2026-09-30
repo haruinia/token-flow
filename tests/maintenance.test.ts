@@ -29,7 +29,7 @@ it('stops during preflight without starting a late model request, and blocks ove
 
 it('probes Responses without repair tools, rejects empty success, and does not persist readiness across startup',async()=>{
  const root=await mkdtemp(join(tmpdir(),'pi-check-'));let calls=0;
- const care=new GatewayMaintenance(root,(_m,context,options)=>{calls++;expect(JSON.stringify(context)).not.toContain('inspect_gateway');expect(options?.maxTokens).toBe(32);return answer(calls===1?[]:[{type:'text',text:'OK'}]);});
+ const care=new GatewayMaintenance(root,(_m,context,options)=>{calls++;expect(JSON.stringify(context)).not.toContain('inspect_gateway');expect(options?.maxTokens).toBe(1024);return answer(calls===1?[]:[{type:'text',text:'OK'}]);});
  try{await care.select({sourceId:'account',model:'qoder/test'});expect(care.check(transport).readiness.status).toBe('checking');expect(()=>care.check(transport)).toThrow('正在');await expect.poll(()=>care.snapshot().readiness.status).toBe('failed');expect(care.snapshot().readiness.message).toContain('完整响应');care.check(transport);await expect.poll(()=>care.snapshot().readiness.status).toBe('ready');expect(calls).toBe(2);expect(care.snapshot().messages).toEqual([]);const reopened=new GatewayMaintenance(root);await reopened.load();expect(reopened.snapshot().selection?.model).toBe('qoder/test');expect(reopened.snapshot().readiness.status).toBe('unchecked');}finally{await care.close();await rm(root,{recursive:true,force:true});}
 });
 it('classifies upstream failures without exposing secrets and starts fresh after a failed turn',async()=>{

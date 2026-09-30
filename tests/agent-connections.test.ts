@@ -11,9 +11,84 @@ async function setup(){const root=await mkdtemp(join(await realpath(tmpdir()),'a
 it('backs up exact original config, preserves providers and unrelated settings, restores and recovers across reopen',async()=>{
  const {root,paths,connections}=await setup();const original='# original comment\nmodel = "old"\nprofile = "work"\n[profiles.work]\nmodel = "profile-old"\n[model_providers.original]\nbase_url = "https://example.test"\n';await writeFile(paths.codex,original);
  const status=(await connections.status())[0];const record=await connections.apply({target:'codex',revision:status.revision,origin:'http://127.0.0.1:9527',model:'codex/model',sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
- const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBeUndefined();expect(parsed.model_provider).toBe('token_flow');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work');
+ const text=await readFile(paths.codex,'utf8');const parsed=parse(text);expect(parsed.profile).toBe('work');expect(parsed.model_provider).toBe('token_flow');expect(parsed.model_providers).toHaveProperty('original');expect(parsed.profiles).toHaveProperty('work.model','codex/model');
  expect((await stat(paths.codex)).mode&0o777).toBe(0o600);expect(JSON.stringify(await connections.status())).not.toContain('fixture-key');
  await new AgentConnections(root,paths,async()=>[]).restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
+});
+
+it('preserves Codex local policy and active legacy profile through model switches, reviews and rollback',async()=>{
+ const {paths,connections}=await setup();
+ const original=`model = "old"
+profile = "work"
+approval_policy = "untrusted"
+sandbox_mode = "read-only"
+[profiles.work]
+model = "profile-model"
+model_provider = "original"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"
+[profiles.other]
+model = "untouched"
+approval_policy = "never"
+[sandbox_workspace_write]
+network_access = false
+writable_roots = ["/tmp/allowed-fixture"]
+[shell_environment_policy]
+inherit = "none"
+[mcp_servers.fixture]
+command = "fixture-mcp"
+[projects."/tmp/project-fixture"]
+trust_level = "untrusted"
+`;
+ await writeFile(paths.codex,original);
+ const before=parse(original);
+ for(const model of ['qoder/test','workbuddy/test','codex/test']){
+  const preview=await connections.preview('codex','http://127.0.0.1:9527',model);
+  expect(preview.routing).toMatchObject({profile:'work',model,model_provider:'token_flow',web_search:model==='codex/test'?'live':'disabled'});
+  const record=await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'s',keyId:randomUUID(),key:'fixture-key'});
+  const after=parse(await readFile(paths.codex,'utf8'));
+  expect(after).toMatchObject({profile:'work',approval_policy:'untrusted',sandbox_mode:'read-only',profiles:{work:{model,model_provider:'token_flow',approval_policy:'on-request',sandbox_mode:'workspace-write',web_search:model==='codex/test'?'live':'disabled'},other:{model:'untouched',approval_policy:'never'}}});
+  for(const field of ['sandbox_workspace_write','shell_environment_policy','mcp_servers','projects'])expect(after[field]).toEqual(before[field]);
+  expect((await connections.review(record.id)).checks.every(c=>c.ok)).toBe(true);
+ }
+ const record=(await connections.status())[0].connection!;
+ const modified=parse(await readFile(paths.codex,'utf8')) as any;
+ modified.profiles.work.model='wrong-model';
+ const {stringify}=await import('smol-toml');await writeFile(paths.codex,stringify(modified));
+ expect((await connections.review(record.id)).checks.find(c=>c.name==='模型与配置层级正确')?.ok).toBe(false);
+ await writeFile(paths.codex,connectedConfig('codex',original,'http://127.0.0.1:9527','codex/test','fixture-key'));
+ await connections.restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
+});
+
+it('rejects invalid active legacy profiles instead of silently dropping their policy',()=>{
+ for(const original of ['profile = "missing"','profile = false','profile = "work"\nprofiles.work = "invalid"']){
+  expect(()=>connectedConfig('codex',original,'http://127.0.0.1:9527','codex/test','key')).toThrow();
+ }
+});
+
+it('keeps local Claude and Qoder tool, hook and approval settings when adding a model provider',()=>{
+ const local={permissions:{defaultMode:'default',allow:['Read'],deny:['Bash(rm *)'],ask:['Bash'],additionalDirectories:['/tmp/fixture']},sandbox:{enabled:true},hooks:{PreToolUse:[{matcher:'Bash',hooks:[{type:'command',command:'fixture-check'}]}]},mcpServers:{fixture:{command:'fixture-mcp'}}};
+ for(const target of ['claude','qoder'] as const){
+  const config=JSON.parse(connectedConfig(target,JSON.stringify(local),'http://127.0.0.1:9527','workbuddy/test','key'));
+  for(const [name,value] of Object.entries(local))expect(config[name]).toEqual(value);
+ }
+ for(const target of ['codex','claude'] as const){
+  for(const powershell of [false,true])expect(agentConfig(target,'http://127.0.0.1:9527','workbuddy/test',powershell)).not.toMatch(/approval_policy|sandbox_mode|permission-mode|skip-permissions|allowedTools/);
+ }
+});
+
+it('configures supported Codex tools by source and restores search when switching back',async()=>{
+ const {paths,connections}=await setup();const original='web_search = "live"\napproval_policy = "on-request"\n';await writeFile(paths.codex,original);
+ for(const model of ['qoder/kmodel_latest','workbuddy/glm-5.1','codex/model']){
+  const preview=await connections.preview('codex','http://127.0.0.1:9527',model);
+  const expected=model.startsWith('codex/')?'live':'disabled';expect(preview.routing.web_search).toBe(expected);
+  await connections.apply({target:'codex',revision:preview.revision,replaceId:preview.replaceId,origin:'http://127.0.0.1:9527',model,sourceId:'source',keyId:randomUUID(),key:'fixture-key'});
+  expect(parse(await readFile(paths.codex,'utf8'))).toMatchObject({web_search:expected,approval_policy:'on-request'});
+  const manual=agentConfig('codex','http://127.0.0.1:9527',model);
+  expect(manual.includes('web_search="disabled"')).toBe(expected==='disabled');
+ }
+ const record=(await connections.status())[0].connection!;await connections.restore(record.id);expect(await readFile(paths.codex,'utf8')).toBe(original);
 });
 it('refuses live processes, stale previews, external modifications, duplicate apply and symlinks',async()=>{
  const {paths,connections,running}=await setup();await writeFile(paths.claude,'{"env":{"KEEP":"yes"},"permissions":{"allow":[]}}');
@@ -50,7 +125,7 @@ it('generates Qoder IDE parameters and pins Claude auxiliary models in both conn
 });
 
 it('reviews actual Claude routing without exposing keys and detects stale auxiliary settings',async()=>{
- const {paths,connections}=await setup();const status=(await connections.status())[1];const record=await connections.apply({target:'claude',revision:status.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'s',keyId:randomUUID(),key:'private-key'});const valid=await connections.review(record.id);expect(valid.checks.every(c=>c.ok)).toBe(true);expect(valid.liveCallVerified).toBe(false);expect(JSON.stringify(valid)).not.toContain('private-key');
+ const {paths,connections}=await setup();const status=(await connections.status())[1];const record=await connections.apply({target:'claude',revision:status.revision,origin:'http://127.0.0.1:9527',model:'qoder/test',sourceId:'s',keyId:randomUUID(),key:'private-key'});const valid=await connections.review(record.id);expect(valid.checks.every(c=>c.ok)).toBe(true);expect(valid.liveCallVerified).toBe(false);expect(valid.compatibility?.autoMode).toBe('unverified');expect(JSON.stringify(valid)).not.toContain('private-key');
  const config=JSON.parse(await readFile(paths.claude,'utf8'));config.env.ANTHROPIC_SMALL_FAST_MODEL='stale';await writeFile(paths.claude,JSON.stringify(config));const drift=await connections.review(record.id);expect(drift.checks.find(c=>c.name==='主模型与辅助模型一致')?.ok).toBe(false);expect(drift.checks.find(c=>c.name==='配置与接入备份一致')?.ok).toBe(false);
 });
 
@@ -106,4 +181,37 @@ it('adds, switches and restores Qoder standalone providers while preserving unre
  const doc=JSON.parse(await readFile(paths.qoder,'utf8'));expect(doc.hooks).toEqual({keep:true});expect(doc.providers.existing.apiKey).toBe('original-key');expect(doc.providers['token-flow']).toMatchObject({protocol:'openai-responses',baseUrl:'http://127.0.0.1:9527/v1',model:'codex/second',apiKey:'second-key'});
  await connections.restore(next.id);expect(await readFile(paths.qoder,'utf8')).toBe(original);
  expect(()=>connectedConfig('qoder','{"providers":{"token-flow":{}}}','http://127.0.0.1:9527','codex/model','key')).toThrow();
+});
+
+it('restores and switches Codex routing while preserving unrelated client edits',async()=>{
+ const {paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
+ const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'s',keyId:randomUUID(),key:'first-key'});
+ await writeFile(paths.codex,'approval_policy = "on-request"\n'+await readFile(paths.codex,'utf8'));
+ const preview=await connections.preview('codex','http://127.0.0.1:9527','workbuddy/new');
+ const next=await connections.apply({target:'codex',revision:preview.revision,replaceId:first.id,origin:'http://127.0.0.1:9527',model:'workbuddy/new',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+ await connections.remove(first.id,(await connections.status())[0].revision);expect((await connections.status())[0].connection?.id).toBe(next.id);
+ await writeFile(paths.codex,'sandbox_mode = "workspace-write"\n'+await readFile(paths.codex,'utf8'));
+ await connections.restore(next.id);expect(parse(await readFile(paths.codex,'utf8'))).toEqual({model:'original',approval_policy:'on-request',sandbox_mode:'workspace-write'});
+});
+it('deletes stale records after reinstall without touching the new config, and keeps history selectable',async()=>{
+ const {root,paths,connections}=await setup();await writeFile(paths.codex,'model = "original"\n');
+ const first=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/old',sourceId:'s',keyId:randomUUID(),key:'first-key'});
+ const original=await readFile(paths.codex,'utf8');await connections.restore(first.id);expect((await connections.status())[0].backups).toHaveLength(1);
+ const next=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'workbuddy/new',sourceId:'s',keyId:randomUUID(),key:'next-key'});
+ await writeFile(paths.codex,'model = "reinstalled"\n');
+ await expect(connections.restore(next.id)).rejects.toThrow('外部修改');
+ await expect(connections.remove(next.id,'0'.repeat(64))).rejects.toThrow('配置已变更');
+ await connections.remove(next.id,(await connections.status())[0].revision);
+ const reopened=new AgentConnections(root,paths,async()=>[]);const status=(await reopened.status())[0];expect(status.connection).toBeNull();expect(status.backups.map(r=>r.id)).toEqual([first.id]);expect(await readFile(paths.codex,'utf8')).toBe('model = "reinstalled"\n');
+ await reopened.remove(first.id,status.revision);expect((await reopened.status())[0].backups).toEqual([]);expect(original).toContain('first-key');
+});
+it('restores a missing file without requiring a maintenance model',async()=>{
+ const {paths,connections}=await setup();
+ const record=await connections.apply({target:'codex',revision:(await connections.status())[0].revision,origin:'http://127.0.0.1:9527',model:'antigravity/m',sourceId:'s',keyId:randomUUID(),key:'key'});
+ await rm(paths.codex);await connections.restore(record.id);expect((await connections.status())[0].connection).toBeNull();
+});
+
+it('requires a public HTTPS endpoint for manual Cursor setup and never invents a writable settings file',()=>{
+ for(const url of ['http://127.0.0.1:9527','https://localhost','https://10.0.0.1','https://192.168.1.2','https://gateway.example.com/v1','https://user:password@gateway.example.com'])expect(()=>agentConfig('cursor',url,'antigravity/gemini-3-flash')).toThrow();
+ expect(JSON.parse(agentConfig('cursor','https://gateway.example.com','antigravity/gemini-3-flash'))).toMatchObject({overrideOpenAIBaseURL:'https://gateway.example.com/v1',customModel:'antigravity/gemini-3-flash'});
 });

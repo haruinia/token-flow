@@ -1,9 +1,10 @@
+import { a2aCapabilities } from '@cua-sample/contracts/a2a';
 import { readFile, writeFile, mkdir, rename, lstat, unlink, open, rm } from 'node:fs/promises';
 import { dirname, join, resolve, parse as parsePath } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 
@@ -22,11 +23,11 @@ export function agentPaths(home=homedir()):AgentPaths {
   return {qoder:join(process.env.QODER_CONFIG_DIR||join(home,'.qoder'),'settings.json'),codex:join(process.env.CODEX_HOME||join(home,'.codex'),'config.toml'),claude:join(process.env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'settings.json'),workbuddy:join(process.env.WORKBUDDY_CONFIG_DIR||process.env.CODEBUDDY_CONFIG_DIR||join(home,'.workbuddy'),'models.json')};
 }
 // Read process names only: command arguments can contain secrets.
-export async function agentProcesses(target:Target):Promise<number[]> {
+export async function agentProcesses(target:Target|'antigravity'):Promise<number[]> {
   try {
     if(process.platform==='win32') {
       const {stdout}=await exec('tasklist',['/FO','CSV','/NH'],{timeout:5000,maxBuffer:2*1024*1024});
-      return stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${target}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
+      return stdout.split('\n').flatMap(line=>{const m=line.match(/^"([^"]+)","(\d+)"/);return m&&new RegExp(`^${target}${target==='antigravity'?'(?: IDE)?':''}(?:\\.exe)?$`,'i').test(m[1])?[Number(m[2])]:[];});
     }
     const {stdout}=await exec('ps',['-axo','pid=,comm='],{timeout:5000,maxBuffer:2*1024*1024});
     return stdout.split('\n').flatMap(line=>{const m=line.trim().match(/^(\d+)\s+(.+)$/);return m&&!(target==='qoder'&&m[2].includes('/Qoder IDE.app/'))&&new RegExp(`(?:^|/)${target}(?:$|[- ])`,'i').test(m[2])?[Number(m[1])]:[];});
@@ -51,8 +52,39 @@ function equivalentConfig(target:Target,a:string|null,b:string|null):boolean {
   };
   try{return equal(target==='codex'?parse(a):JSON.parse(a),target==='codex'?parse(b):JSON.parse(b));}catch{return false;}
 }
+// Reverse only the fields this connection changed. Client settings added later survive.
+function restoredConfig(record:Record,current:string|null):string|null {
+  if(equivalentConfig(record.target,current,record.before))return current;
+  if(equivalentConfig(record.target,current,record.after))return record.before;
+  const fail=()=>{throw conflict('接入字段存在外部修改，无法安全还原。请检查配置，或删除失效记录后重新接入。备份仍保留。');};
+  if(current===null)return fail();
+  const decode=(text:string)=>record.target==='codex'?parse(text):JSON.parse(text);
+  const isObject=(value:unknown):value is {[key:string]:unknown}=>!!value&&typeof value==='object'&&!Array.isArray(value);
+  const reverse=(before:unknown,after:unknown,actual:unknown):unknown=>{
+    if(isDeepStrictEqual(before,after)||isDeepStrictEqual(actual,before))return actual;
+    if(isDeepStrictEqual(actual,after))return before;
+    if(isObject(after)&&isObject(actual)&&(before===undefined||isObject(before))){
+      const result={...actual};const original=isObject(before)?before:{};
+      for(const key of new Set([...Object.keys(original),...Object.keys(after)])){
+        const value=reverse(original[key],after[key],actual[key]);
+        if(value===undefined)delete result[key];else Object.defineProperty(result,key,{value,writable:true,enumerable:true,configurable:true});
+      }
+      return Object.keys(result).length||before!==undefined?result:undefined;
+    }
+    return fail();
+  };
+  try{
+    const result=reverse(record.before===null?undefined:decode(record.before),decode(record.after),decode(current));
+    return result===undefined?null:record.target==='codex'?stringify(object(result)):JSON.stringify(result,null,2)+'\n';
+  }catch{return fail();}
+}
 function object(value:unknown):{[key:string]:any} {
   if(!value||typeof value!=='object'||Array.isArray(value))throw conflict('配置格式无效，未覆盖原文件。');return value;
+}
+function codexProfile(doc:{[key:string]:any}):{[key:string]:any}|undefined {
+  if(doc.profile===undefined)return;
+  if(typeof doc.profile!=='string'||!Object.hasOwn(object(doc.profiles),doc.profile))throw conflict('Codex 当前配置档案无效，未修改原设置。');
+  return object(doc.profiles[doc.profile]);
 }
 export function connectedConfig(target:Target,original:string|null,origin:string,model:string,key:string) {
   const url=new URL(origin);if(url.protocol!=='http:'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/'||url.search||url.hash||url.username||url.password)throw new Error('接入地址必须是本机网关');
@@ -79,9 +111,12 @@ export function connectedConfig(target:Target,original:string|null,origin:string
   const doc=original===null?{}:parse(original);
   // Full original bytes remain in the backup; TOML serialization preserves semantic settings.
   const providers=doc.model_providers===undefined?{}:object(doc.model_providers);
-  const next={...doc,model,model_provider:'token_flow',model_providers:{...providers,token_flow:{name:'token-flow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
-  // An active profile takes precedence over root model settings; leave its contents untouched.
-  delete (next as {[key:string]:unknown}).profile;
+  const routing={model,model_provider:'token_flow',...(a2aCapabilities(model)?.serverTools===false?{web_search:'disabled'}:{})};
+  const next:{[key:string]:any}={...doc,...routing,model_providers:{...providers,token_flow:{name:'token-flow',base_url:`${url.origin}/v1`,wire_api:'responses',experimental_bearer_token:key,requires_openai_auth:false,supports_websockets:false}}};
+  // Legacy clients overlay the selected profile. Keep its policy and selection;
+  // update only model routing. Newer CLI-selected profile files stay user-owned.
+  const profile=codexProfile(doc);
+  if(profile)next.profiles={...object(doc.profiles),[doc.profile as string]:{...profile,...routing}};
   return stringify(next);
 }
 
@@ -142,10 +177,13 @@ export class AgentConnections {
         checks.push({name:'自定义模型已写入配置',ok:!!model&&(!actual.availableModels?.length||actual.availableModels.includes(record.model))},{name:'接口地址与工具能力正确',ok:model?.url===original.url&&model?.supportsToolCall===true},{name:'客户端 Key 未被覆盖',ok:model?.apiKey===original.apiKey});
       }else{
         const provider=actual.model_providers?.token_flow;const original=expected.model_providers.token_flow;
-        checks.push({name:'模型与配置层级正确',ok:actual.model===record.model&&actual.model_provider==='token_flow'&&!actual.profile},{name:'接口与协议正确',ok:provider?.base_url===original.base_url&&provider?.wire_api==='responses'},{name:'客户端 Key 未被覆盖',ok:provider?.experimental_bearer_token===original.experimental_bearer_token});
+        const effective={...actual,...codexProfile(actual)};
+        checks.push({name:'模型与配置层级正确',ok:effective.model===record.model&&effective.model_provider==='token_flow'&&actual.profile===expected.profile},{name:'接口与协议正确',ok:provider?.base_url===original.base_url&&provider?.wire_api==='responses'},{name:'客户端 Key 未被覆盖',ok:provider?.experimental_bearer_token===original.experimental_bearer_token});
+        checks.push({name:'本地配置档案选择保留',ok:actual.profile===parse(record.before??'').profile});
+        if(a2aCapabilities(record.model)?.serverTools===false)checks.push({name:'来源不支持的内置网页搜索已关闭',ok:effective.web_search==='disabled'});
       }
     }catch{checks.push({name:'配置格式可解析',ok:false});}
-    return {id,target:record.target,model:record.model,checks,liveCallVerified:false,note:record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 token-flow · ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 token-flow · ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
+    return {id,target:record.target,model:record.model,checks,liveCallVerified:false,...(record.target==='claude'?{compatibility:{autoMode:'unverified' as const,note:'主模型、辅助模型配置一致不代表 Auto Mode 审批可用。审批分类器与 App 的维修审批模型相互独立；Messages 文本和工具检测也不能验证分类器。'}}:{}),note:record.target==='qoder'?`重启 Qoder 独立应用，在模型菜单选择 token-flow · ${record.model}。原登录与内置模型保留；不适用于 Qoder IDE。`:record.target==='workbuddy'?`在 WorkBuddy 新建任务的输入框下方打开模型菜单，选择 token-flow · ${record.model}。若没有显示，重启 WorkBuddy 后再查看。配置检查不代表已在客户端选用。`:'重启 Agent 后加载配置；项目级设置或已有终端环境变量仍可能覆盖用户配置。'};
   }
   async apply(input:{target:Target;revision:string;origin:string;model:string;sourceId:string;keyId:string;key:string;allowRunning?:boolean;replaceId?:string}){
     return this.run(input.target,async()=>{
@@ -154,8 +192,7 @@ export class AgentConnections {
       const active=(await this.records()).find(r=>r.target===input.target&&r.state!=='restored');
       if(active&&active.id!==input.replaceId)throw conflict('此 Agent 已有接入记录，请审批切换方案后再接入。');
       if(input.replaceId&&!active)throw conflict('接入记录已变化，请重新生成维修方案。');
-      if(active&&!equivalentConfig(input.target,before,active.before)&&!equivalentConfig(input.target,before,active.after))throw conflict('配置存在外部修改，请先保留并检查，未覆盖。');
-      const original=active?active.before:before;
+      const original=active?restoredConfig(active,before):before;
       let after:string;try{after=connectedConfig(input.target,original,input.origin,input.model,input.key);}catch{throw conflict('配置格式无法安全解析，未修改原文件。');}
       const record:Record={id:randomUUID(),target:input.target,createdAt:new Date().toISOString(),before:original,after,beforeHash:hash(original),afterHash:hash(after),state:'prepared',keyId:input.keyId,sourceId:input.sourceId,model:input.model,...(active?{supersedes:active.id,previousConfig:before,previousHash:hash(before)}:{})};
       await this.save(record);await this.replace(input.target,input.revision,after,input.allowRunning);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
@@ -168,12 +205,12 @@ export class AgentConnections {
   async preview(target:Target,origin:string,model:string){
     const records=await this.records();const active=records.find(r=>r.target===target&&r.state!=='restored');
     const current=await readConfig(this.paths[target]);
-    if(active&&!equivalentConfig(target,current,active.before)&&!equivalentConfig(target,current,active.after))throw conflict('配置存在外部修改，无法生成安全的自动覆盖方案。');
-    const original=active?active.before:current;
+    const original=active?restoredConfig(active,current):current;
     const after=connectedConfig(target,original,origin,model,'<审批后由网关注入客户端 Key>');
     // Only expose gateway-owned routing fields, never the full user configuration.
     const parsed=target==='codex'?parse(after):JSON.parse(after);
-    const routing=target==='qoder'?parsed.providers['token-flow']:target==='workbuddy'?(Array.isArray(parsed)?parsed:parsed.models).find((m:{id:string})=>m.id===model):target==='codex'?{model:parsed.model,model_provider:parsed.model_provider,token_flow:parsed.model_providers.token_flow}:Object.fromEntries(Object.entries(parsed.env).filter(([k])=>['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].includes(k)));
+    const effective=target==='codex'?{...parsed,...codexProfile(parsed)}:parsed;
+    const routing=target==='qoder'?parsed.providers['token-flow']:target==='workbuddy'?(Array.isArray(parsed)?parsed:parsed.models).find((m:{id:string})=>m.id===model):target==='codex'?{model:effective.model,model_provider:effective.model_provider,...(parsed.profile!==undefined?{profile:parsed.profile}:{}),...(effective.web_search!==undefined?{web_search:effective.web_search}:{}),token_flow:parsed.model_providers.token_flow}:Object.fromEntries(Object.entries(parsed.env).filter(([k])=>['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','ANTHROPIC_SMALL_FAST_MODEL','CLAUDE_CODE_SUBAGENT_MODEL'].includes(k)));
     return {target,path:this.paths[target],revision:hash(current),replaceId:active?.id,previousModel:active?.model,pids:await this.processes(target),routing};
   }
   async repair(id:string){
@@ -186,6 +223,17 @@ export class AgentConnections {
       await this.replace(record.target,current,record.after);record.state='applied';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
+  async remove(id:string,revision:string){
+    const entry=(await this.records()).find(r=>r.id===id);if(!entry)throw conflict('备份不存在');
+    return this.run(entry.target,async()=>{
+      const records=await this.records();const record=records.find(r=>r.id===id);if(!record)throw conflict('备份不存在');
+      if(hash(await readConfig(this.paths[record.target]))!==revision)throw conflict('配置已变更，请刷新后再删除记录。');
+      // An interrupted replacement can still depend on the previous journal.
+      if(records.some(r=>r.state==='prepared'&&r.supersedes===id))throw conflict('新接入仍依赖此备份，请先还原或删除新接入记录。');
+      await this.retirePrevious(record);
+      await unlink(join(this.dir(),`${id}.json`));return publicRecord(record);
+    });
+  }
   async restore(id:string,approval?:{revision:string;allowRunning:boolean}){
     const entry=(await this.records()).find(r=>r.id===id);if(!entry)throw conflict('备份不存在');
     return this.run(entry.target,async()=>{
@@ -194,8 +242,8 @@ export class AgentConnections {
       const currentText=await readConfig(this.paths[record.target]);const current=hash(currentText);
       if(approval&&current!==approval.revision)throw conflict('审批后配置已变更，请重新生成方案。');
       if(equivalentConfig(record.target,currentText,record.before)){record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);}
-      if(!equivalentConfig(record.target,currentText,record.after))throw conflict('接入后配置已被外部修改，自动还原会覆盖新内容，已停止。备份仍保留。');
-      await this.replace(record.target,current,record.before,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
+      const restored=restoredConfig(record,currentText);
+      await this.replace(record.target,current,restored,approval?.allowRunning);record.state='restored';await this.save(record);await this.retirePrevious(record);return publicRecord(record);
     });
   }
 }

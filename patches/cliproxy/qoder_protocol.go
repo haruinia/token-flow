@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/tidwall/gjson"
 )
 
@@ -299,6 +300,9 @@ func BuildQoderRequestBody(payload []byte, modelKey string, isReasoning bool) ([
 	sessionID := uuid.NewString()
 
 	parsed := gjson.ParseBytes(payload)
+	if thinking.ExtractTranslatedReasoningEffort(payload, "openai") == string(thinking.LevelNone) {
+		isReasoning = false
+	}
 
 	var messages []map[string]any
 	var lastUserText string
@@ -318,6 +322,11 @@ func BuildQoderRequestBody(payload []byte, modelKey string, isReasoning bool) ([
 		}
 		if role == "system" || role == "developer" {
 			systemParts = append(systemParts, text)
+			// The native service consumes system instructions from messages;
+			// the top-level system field alone is not sufficient.
+			if text != "" {
+				messages = append(messages, map[string]any{"role": "system", "content": text})
+			}
 			continue
 		}
 		if role == "user" {

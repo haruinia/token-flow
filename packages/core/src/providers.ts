@@ -20,11 +20,11 @@ export type ProbeResult = {responses:boolean; functionCall:boolean; functionOutp
 
 export class ResponsesProvider implements ResponsesClient {
   private client: OpenAI;
-  constructor(readonly config: ProviderConfig, apiKey: string, headers?:Record<string,string>) {
+  constructor(readonly config: ProviderConfig, apiKey: string, headers?:Record<string,string>,customFetch?:typeof fetch) {
     providerSchema.parse(config);
     if (!apiKey) throw new Error('请先配置 Provider API Key 或启动 Local Agent。');
     this.client = new OpenAI({apiKey, defaultHeaders:headers, baseURL:config.baseURL.replace(/\/$/,''),timeout:60000,maxRetries:0,
-      fetchOptions:{redirect:'error'}});
+      fetch:customFetch,fetchOptions:{redirect:'error'}});
   }
   async create(request: Record<string, unknown>, signal: AbortSignal): Promise<ResponsesApiResponse> {
     try { return await this.client.responses.create(request, {signal}) as ResponsesApiResponse; }

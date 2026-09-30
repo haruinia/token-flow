@@ -1,5 +1,10 @@
+import { NativeAccounts, nativeProviderSchema, type NativeProvider } from './native-accounts.js';
+import { ClaudeAccountStore, type CredentialStore } from './claude-accounts.js';
+import { AntigravityAccountStore, antigravityDatabasePath } from './antigravity-accounts.js';
+import { upstreamIdle } from './upstream-idle.js';
+import { GatewayContext, GatewayContextError } from './gateway-context.js';
 import { CodexAccounts } from './codex-accounts.js';
-import { AgentConnections, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
+import { AgentConnections, agentProcesses, targetSchema, type AgentPaths, type Target } from './agent-connections.js';
 import { localCredential } from './local-credentials.js';
 import { MaintenanceApproval,approvalPolicy } from './maintenance-approval.js';
 import { GatewayMaintenance, maintenanceSelection, maintenanceChain, type MaintenanceChain } from './gateway-maintenance.js';
@@ -26,19 +31,25 @@ import { RunControl } from './control.js';
 import { checkDesktopPermissions, desktopInstructions, desktopSupported, type DesktopPermissions } from './desktop/index.js';
 
 export type Secrets = {get:(name:string)=>Promise<string>; set:(name:string,value:string)=>Promise<void>};
-export type ServiceOptions = {agentPaths?:AgentPaths;agentProcesses?:(target:Target)=>Promise<number[]>;root:string;binary:string;token:string;localKey:string;secrets:Secrets;credentialWarnings?:()=>string[];headless?:boolean;uiRoot?:string;proxyPort?:number;openExternal?:(url:string)=>Promise<void>};
+export type ServiceOptions = {antigravityPath?:string;claudeCredentialStore?:CredentialStore|null;nativeProcesses?:(target:NativeProvider)=>Promise<number[]>;agentPaths?:AgentPaths;agentProcesses?:(target:Target)=>Promise<number[]>;root:string;binary:string;token:string;localKey:string;secrets:Secrets;credentialWarnings?:()=>string[];headless?:boolean;uiRoot?:string;proxyPort?:number;openExternal?:(url:string)=>Promise<void>};
 const clientCredential=(headers:{authorization?:string;'x-api-key'?:string|string[]})=>{
   const bearer=headers.authorization?.replace(/^Bearer /,'')??'';
   const apiKey=typeof headers['x-api-key']==='string'?headers['x-api-key']:'';
   return {value:bearer||apiKey,conflict:!!bearer&&!!apiKey&&bearer!==apiKey};
 };
 const same=(a:string,b:string)=>{const left=Buffer.from(a),right=Buffer.from(b);return left.length===right.length && timingSafeEqual(left,right);};
+const a2aCapabilityErrors:Record<string,string>={
+  a2a_source_policy_blocked:'来源端安全策略不允许这次调用渠道。请使用来源明确支持的渠道或联系其支持；重新登录和更改审批权限不能解决此限制。',
+  a2a_structured_output_unsupported:'该来源暂不支持严格 JSON 或 JSON Schema 输出。请使用普通文本，或选择支持结构化输出的来源。',
+  a2a_server_tool_unsupported:'该来源支持客户端函数工具，暂不支持服务端内置工具。请关闭内置网页搜索等服务端工具，或选择支持它们的来源。',
+};
 export async function createDesktopService(options:ServiceOptions) {
   const proxyPort=z.number().int().min(1).max(65535).parse(options.proxyPort??8317);
   const root=resolve(options.root);
   await mkdir(root,{recursive:true,mode:0o700});await chmod(root,0o700);
   const activity=new GatewayActivity();
   const gatewayKeys=await GatewayKeys.open(root);
+  const gatewayContext=await GatewayContext.open(root);
   const settingsPath=join(root,'settings.json');
   let config:ProviderConfig={...defaultProvider};
   config.baseURL=`http://127.0.0.1:${proxyPort}/v1`;
@@ -68,7 +79,21 @@ export async function createDesktopService(options:ServiceOptions) {
   let probe:ProbeResult|undefined;
   let probing=false;
   const key=()=>config.kind==='cliproxy'?Promise.resolve(proxy.gateway().apiKey):options.secrets.get(config.kind);
-  const provider=async()=>new ResponsesProvider(config,await key());
+  const cursorFetch=(model:string,sourceId=proxy.cursor.id,owner='workspace'):typeof fetch|undefined=>{
+    if(!model.startsWith('cursor/'))return;
+    return async(input,init)=>{
+      const request=new Request(input,init);const url=new URL(request.url);const gateway=new URL(proxy.gateway().baseURL);
+      if(url.origin!==gateway.origin||!url.pathname.startsWith('/v1/'))throw new Error('Cursor transport destination mismatch');
+      if(proxy.snapshot().state!=='running'||!sourceId)throw new Error('Cursor source unavailable');
+      proxy.sourceAuth(sourceId,model);
+      const route=url.pathname.slice('/v1/'.length);
+      if(route==='models'&&request.method==='GET')return Response.json({object:'list',data:proxy.cursor.snapshot().models.map(m=>({id:m.id,object:'model',owned_by:'cursor'}))});
+      const body=await request.json() as {model:string};if(body.model!==model)throw new Error('Cursor model scope mismatch');
+      const send=(path:string,value:unknown)=>proxy.cursor.response(path,value,request.signal);
+      return ['responses','responses/compact'].includes(route)?gatewayContext.response(route,body,owner,sourceId,send):send(route,body);
+    };
+  };
+  const provider=async()=>new ResponsesProvider(config,await key(),undefined,config.kind==='cliproxy'?cursorFetch(config.model):undefined);
   let session:JavaScriptSession|undefined;
   const manager=new RunnerManager({dataRoot:root,executorFactory:()=>({execute:async context=>{
     const runConfig=structuredClone(config);
@@ -100,7 +125,7 @@ export async function createDesktopService(options:ServiceOptions) {
         ].join('\n'),
         checkpoint:async()=>{await control.checkpoint();await resync();},
         humanTakeover:async message=>{await control.human(message);await resync();},
-      },new ResponsesProvider(runConfig,await key()));
+      },new ResponsesProvider(runConfig,await key(),undefined,runConfig.kind==='cliproxy'?cursorFetch(runConfig.model):undefined));
       await context.captureScreenshot(session,'final');
       await context.completeRun({notes:result.notes});
     } finally {await session?.close();session=undefined;control.reset();}
@@ -127,7 +152,7 @@ export async function createDesktopService(options:ServiceOptions) {
   });
   app.addHook('preValidation',async(req,reply)=>{
     const route=req.routeOptions.url;
-    if((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'))||(req.method==='DELETE'&&route==='/api/local-agent/accounts/:id')||(req.method==='POST'&&['/api/codex-accounts/switch','/api/codex-accounts/restore','/api/a2a/connect','/api/a2a/restore','/api/a2a/import','/api/browser/source','/api/desktop','/api/desktop/permissions','/api/browser/extension/pair','/api/browser/open','/api/runs','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??''))) {
+    if((req.method==='PUT'&&(route==='/api/settings'||route==='/api/local-agent/gateway'))||(req.method==='DELETE'&&route==='/api/local-agent/accounts/:id')||(req.method==='POST'&&['/api/native-accounts/:provider/switch','/api/native-accounts/:provider/restore','/api/codex-accounts/switch','/api/codex-accounts/restore','/api/a2a/connect','/api/a2a/restore','/api/a2a/delete','/api/a2a/import','/api/browser/source','/api/desktop','/api/desktop/permissions','/api/browser/extension/pair','/api/browser/open','/api/runs','/api/providers/probe','/api/local-agent/:action','/api/local-agent/login/:action','/api/local-agent/accounts/:id','/api/local-agent/import-local/:provider'].includes(route??''))) {
       if(mutationOwner)return reply.code(409).send({error:'另一个启动或配置操作正在进行，请稍后重试。'});
       mutationOwner=req.id;
     }
@@ -164,6 +189,10 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   const connections=new AgentConnections(root,options.agentPaths,options.agentProcesses);
   const codexAccounts=new CodexAccounts(root,connections.paths.codex,options.agentProcesses?()=>options.agentProcesses!('codex'):undefined);
+  const nativeAccounts={
+    claude:new NativeAccounts(join(root,'claude-account-backup.json'),new ClaudeAccountStore(connections.paths.claude,options.claudeCredentialStore),()=>options.nativeProcesses?options.nativeProcesses('claude'):options.agentProcesses?options.agentProcesses('claude'):agentProcesses('claude')),
+    antigravity:new NativeAccounts(join(root,'antigravity-account-backup.json'),new AntigravityAccountStore(options.antigravityPath??await antigravityDatabasePath()),()=>options.nativeProcesses?options.nativeProcesses('antigravity'):agentProcesses('antigravity')),
+  };
   let discoveryTask:Promise<void>|undefined;
   let startupCheckTimer:ReturnType<typeof setTimeout>|undefined;
   let serviceClosing=false;
@@ -217,12 +246,12 @@ export async function createDesktopService(options:ServiceOptions) {
   };
   const maintenanceTransport=()=>{
     const selection=maintenance.snapshot().selection;if(!selection)throw new Error('请先指定维修模型');
-    const gateway=proxy.gateway();return {baseURL:gateway.baseURL,apiKey:gateway.apiKey,authID:proxy.sourceAuth(selection.sourceId,selection.model)};
+    const gateway=proxy.gateway();return {baseURL:gateway.baseURL,apiKey:gateway.apiKey,authID:proxy.sourceAuth(selection.sourceId,selection.model),fetch:cursorFetch(selection.model,selection.sourceId,'maintenance')};
   };
   let maintenanceOrigin='http://127.0.0.1:9527';
   const approval=new MaintenanceApproval(async(proposal,policy)=>{
     const selected=policy.reviewer??maintenance.snapshot().selection;if(!selected)throw new Error('请先选择审批模型');
-    const gateway=proxy.gateway();return maintenance.reviewProposal(proposal,selected,{baseURL:gateway.baseURL,apiKey:gateway.apiKey,authID:proxy.sourceAuth(selected.sourceId,selected.model)});
+    const gateway=proxy.gateway();return maintenance.reviewProposal(proposal,selected,{baseURL:gateway.baseURL,apiKey:gateway.apiKey,authID:proxy.sourceAuth(selected.sourceId,selected.model),fetch:cursorFetch(selected.model,selected.sourceId,'approval')});
   },()=>maintenance.settled(),async(result)=>{
     const record=result as {id:string;target:Target;model:string;sourceId:string;state:string};
     startMaintenance('审批后的维修已执行。请重新读取当前配置和接入状态，确认是否正确；明确区分配置检查与真实客户端调用，说明是否需要重启或选模型。',false,{target:record.target,sourceId:record.sourceId,model:record.model,...(record.state!=='restored'?{connectionId:record.id}:{})},true);
@@ -275,6 +304,17 @@ export async function createDesktopService(options:ServiceOptions) {
     if((await codexAccountStatus()).gatewayConnected)throw Object.assign(new Error('请先还原 Codex 的 A2A 接口，再还原本机登录。'),{statusCode:409});
     await codexAccounts.restore(nativeSwitchInput.strict().parse(req.body));return codexAccountStatus();
   });
+  const nativeStatus=async(provider:NativeProvider)=>({...await nativeAccounts[provider].status(),accounts:await proxy.nativeAccounts(provider),gatewayConnected:provider==='claude'&&!!(await connections.status()).find(t=>t.id==='claude')?.connection});
+  app.get('/api/native-accounts/:provider',async req=>nativeStatus(nativeProviderSchema.parse((req.params as {provider:string}).provider)));
+  for(const action of ['switch','restore'] as const)app.post(`/api/native-accounts/:provider/${action}`,async req=>{
+    await idle();const provider=nativeProviderSchema.parse((req.params as {provider:string}).provider);
+    if((await nativeStatus(provider)).gatewayConnected)throw Object.assign(new Error('请先还原 Claude Code 的 A2A 接口，再切换或还原本机登录。'),{statusCode:409});
+    if(action==='switch'){
+      const input=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/),sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300).optional()}).strict().parse(req.body);
+      await nativeAccounts[provider].switch(input,await proxy.nativeCredential(provider,input.sourceId,input.model));
+    }else await nativeAccounts[provider].restore(z.object({revision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body));
+    return nativeStatus(provider);
+  });
   app.get('/api/a2a',inspectConnections);
   app.post('/api/a2a/import',async req=>{
     await idle();const {target}=z.object({target:z.enum(['codex','claude'])}).strict().parse(req.body);
@@ -284,7 +324,6 @@ export async function createDesktopService(options:ServiceOptions) {
   app.post('/api/a2a/connect',async req=>{
     await idle();
     const input=z.object({replaceId:z.string().uuid().optional(),allowRunning:z.boolean().default(false),target:targetSchema,sourceId:z.string().regex(/^[a-f0-9]{24}$/),model:z.string().min(1).max(300),revision:z.string().regex(/^[a-f0-9]{64}$/),tokenLimit:z.number().int().min(0).max(1e12).nullable().default(null)}).strict().parse(req.body);
-    if(input.model.startsWith('cursor/'))throw Object.assign(new Error('Cursor 当前为文本 API，尚不支持 Agent 工具调用。请在 Agent 接入页面验证文本调用。'),{statusCode:400});
     if(input.replaceId)approval.clear();
     const record=await applyConnection(input,`http://${req.headers.host}`);
     maintenanceOrigin=`http://${req.headers.host}`;
@@ -293,11 +332,27 @@ export async function createDesktopService(options:ServiceOptions) {
     if(maintenance.snapshot().readiness.status==='ready'){try{startMaintenance(`请 review 刚完成的 ${record.target} 接入（记录 ${record.id}），核对所选模型、接口、辅助模型、Key 权限与备份，并说明是否需要重启或手动选模型。仅做只读检查，不要还原。`,false,{target:record.target,sourceId:record.sourceId,model:record.model,connectionId:record.id});review={status:'running',message:'维修师傅正在检查这次接入。'};}catch{review={status:'deferred',message:'配置已接入，维修检查暂未开始，可点击“请师傅复查”重试。'};}}
     return {...record,review};
   });
-  app.post('/api/a2a/restore' ,async req=>{await idle();return restoreConnection(z.object({id:z.string().uuid()}).strict().parse(req.body).id);});
+  app.post('/api/a2a/restore',async req=>{
+    await idle();
+    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/).optional(),allowRunning:z.boolean().default(false)}).strict().refine(v=>!v.allowRunning||!!v.revision,'运行中还原需要当前配置版本').parse(req.body);
+    approval.clear();
+    return restoreConnection(input.id,input.revision?{revision:input.revision,allowRunning:input.allowRunning}:undefined);
+  });
+  app.post('/api/a2a/delete',async req=>{
+    await idle();
+    const input=z.object({id:z.string().uuid(),revision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);
+    approval.clear();
+    const previous=(await connections.status()).flatMap(t=>t.backups);
+    const record=await connections.remove(input.id,input.revision);
+    for(const keyId of [record.keyId,previous.find(r=>r.id===record.supersedes)?.keyId]){
+      if(keyId&&gatewayKeys.list().some(k=>k.id===keyId))await gatewayKeys.remove(keyId);
+    }
+    return record;
+  });
   app.get('/api/maintenance',async()=>({...maintenance.snapshot(),...approval.snapshot()}));
   app.post('/api/maintenance/reset',async()=>{approval.clear();return maintenance.reset();});
   app.post('/api/maintenance/stop',async()=>{await maintenance.close();return maintenance.snapshot();});
-  app.put('/api/maintenance',async req=>{const input=maintenanceSelection.parse(req.body);proxy.sourceAuth(input.sourceId,input.model);if(input.model.startsWith('cursor/'))throw Object.assign(new Error('Cursor 文本模型暂不支持维修工具调用'),{statusCode:400});approval.clear();await maintenance.select(input);return maintenance.check(maintenanceTransport());});
+  app.put('/api/maintenance',async req=>{const input=maintenanceSelection.parse(req.body);proxy.sourceAuth(input.sourceId,input.model);approval.clear();await maintenance.select(input);return maintenance.check(maintenanceTransport());});
   app.post('/api/maintenance/check',async()=>maintenance.check(maintenanceTransport()));
   app.put('/api/maintenance/approval-policy',async req=>{
     const policy=approvalPolicy.parse(req.body);if(policy.reviewer)proxy.sourceAuth(policy.reviewer.sourceId,policy.reviewer.model);return approval.configure(policy);
@@ -374,7 +429,7 @@ export async function createDesktopService(options:ServiceOptions) {
     return runs.filter(r=>r!==null).sort((a,b)=>b.startedAt.localeCompare(a.startedAt)).slice(0,100);
   });
   // Stable authenticated gateway for external local AI clients. Translation is performed by CLIProxyAPI.
-  for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens'])app.route({method:path==='models'?'GET':'POST',url:`/v1/${path}`,handler:async(req,reply)=>{
+  for(const path of ['models','responses','responses/compact','chat/completions','messages','messages/count_tokens'])app.route({method:path==='models'?'GET':'POST',url:`/v1/${path}`,bodyLimit:16*1024*1024,handler:async(req,reply)=>{
     const bearer=clientCredential(req.headers).value;
     const client=gatewayKeys.authenticate(bearer);
     if(bearer && !same(bearer,options.token) && !client) return reply.code(401).send({error:{message:'Invalid or disabled API key',type:'authentication_error'}});
@@ -395,7 +450,7 @@ export async function createDesktopService(options:ServiceOptions) {
       if(client.sourceId){
         try{for(const model of client.models)sourceAuth=proxy.sourceAuth(client.sourceId,model);}catch{record(503);return reply.code(503).send({error:{message:'Selected source account is unavailable',type:'source_unavailable'}});}
       }
-      if(path==='models') return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,...(model.displayName?{display_name:model.displayName}:{}),...(model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};
+      if(path==='models') return {object:'list',data:available.map(model=>({id:model.id,object:'model',owned_by:model.provider,...(model.displayName?{display_name:model.displayName}:{}),...(model.capabilities?{capabilities:model.capabilities}:model.textOnly?{capabilities:{text:true,tools:false,images:false}}:{})}))};
       if(!allowsProtocol(client.agents,path)){record(403);return reply.code(403).send({error:{message:'This API key does not allow this agent protocol',type:'agent_not_allowed'}});}
       const model=z.object({model:z.string().min(1).max(300)}).parse(req.body).model;
       if(!client.models.includes(model)){record(403);return reply.code(403).send({error:{message:`此 Key 未授权请求模型。请将主模型、辅助模型及项目级配置统一为已授权的模型 ID（含提供商前缀）：${client.models.slice(0,5).join('、')||'暂无授权模型'}。无需重新登录厂商账号。`,type:'model_not_allowed'}});}
@@ -406,21 +461,42 @@ export async function createDesktopService(options:ServiceOptions) {
     }
     const upstreamURL=client?proxy.gateway().baseURL:config.baseURL;
     const upstreamKey=client?proxy.gateway().apiKey:await key();
-    const abort=new AbortController();const timeout=setTimeout(()=>abort.abort(),120000);
+    const abort=upstreamIdle();
     reply.raw.once('close',()=>abort.abort());
     try {
       const cursorModel=typeof (req.body as {model?:unknown})?.model==='string'&&(req.body as {model:string}).model.startsWith('cursor/');
-      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);clearTimeout(timeout);return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
-      const response=cursorModel?await proxy.cursor.response(path,req.body,abort.signal):await fetch(`${upstreamURL.replace(/\/$/,'')}/${path}`,{method:req.method,headers:{...(sourceAuth?{'X-Token-Flow-Auth':sourceAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(req.body):undefined,redirect:'error',signal:abort.signal});
-      if(!response.ok){record(response.status);await settle({inputTokens:null,outputTokens:null},response.status>=500);if(cursorModel){clearTimeout(timeout);return reply.code(response.status).send(await response.json());}const regionRestricted=response.status===400&&(await response.text()).includes('User location is not supported for the API use');await response.body?.cancel().catch(()=>{});clearTimeout(timeout);return reply.code(response.status).send({error:{message:regionRestricted?'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。':'Upstream provider request failed',type:regionRestricted?'region_not_supported':'provider_error'}});}
+      if(cursorModel&&proxy.snapshot().state!=='running'){record(503);await settle({inputTokens:null,outputTokens:null},false);abort.close();return reply.code(503).send({error:{message:'网关未启动',type:'provider_error'}});}
+      const send=async(route:string,body:unknown)=>abort.watch(await fetch(`${upstreamURL.replace(/\/$/,'')}/${route}`,{method:req.method,headers:{...(sourceAuth?{'X-Token-Flow-Auth':sourceAuth}:{}),Authorization:`Bearer ${upstreamKey}`,'Content-Type':'application/json',...(typeof req.headers['anthropic-version']==='string'?{'anthropic-version':req.headers['anthropic-version']}:{}),...(typeof req.headers['anthropic-beta']==='string'?{'anthropic-beta':req.headers['anthropic-beta']}:{}),...(typeof req.headers['x-stainless-lang']==='string'?{'x-stainless-lang':req.headers['x-stainless-lang']}:{})},body:req.method==='POST'?JSON.stringify(body):undefined,redirect:'error',signal:abort.signal}));
+      const model=(req.body as {model?:string})?.model;
+      const bridgeContext=(path==='responses'||path==='responses/compact')&&!!(client||config.kind==='cliproxy')&&typeof model==='string'&&/^(qoder|workbuddy|cursor)\//.test(model);
+      const dispatch=cursorModel?async(route:string,body:unknown)=>abort.watch(await proxy.cursor.response(route,body,abort.signal)):send;
+      const response=bridgeContext?await gatewayContext.response(path,req.body as {model:string},client?.id??'workspace',client?.sourceId??upstreamURL,dispatch):await dispatch(path,req.body);
+      if(!response.ok){
+        record(response.status);await settle({inputTokens:null,outputTokens:null},response.status>=500);
+        if(cursorModel){abort.close();return reply.code(response.status).send(await response.json());}
+        const diagnostic=response.status===400?await response.text():'';
+        let capabilityCode='';try{const code=JSON.parse(diagnostic)?.error?.code;if(typeof code==='string'&&Object.hasOwn(a2aCapabilityErrors,code))capabilityCode=code;}catch{/* Only known capability codes are public. */}
+        const regionRestricted=diagnostic.includes('User location is not supported for the API use');
+        await response.body?.cancel().catch(()=>{});abort.close();
+        return reply.code(response.status).send({error:{message:capabilityCode?a2aCapabilityErrors[capabilityCode]:regionRestricted?'所选账号的上游服务不支持当前地区使用 API。请查看提供商的地区支持说明；重新登录不能解决此限制。':'Upstream provider request failed',type:capabilityCode==='a2a_source_policy_blocked'?'source_policy_blocked':capabilityCode?'unsupported_feature':regionRestricted?'region_not_supported':'provider_error',...(capabilityCode?{code:capabilityCode}:{})}});
+      }
+      if(cursorModel&&response.headers.has('x-token-flow-output-limit'))reply.header('X-Token-Flow-Output-Limit',response.headers.get('x-token-flow-output-limit')!);
+      if(bridgeContext&&response.headers.has('x-token-flow-compaction'))reply.header('X-Token-Flow-Compaction',response.headers.get('x-token-flow-compaction')!);
       reply.code(response.status).header('Content-Type',response.headers.get('content-type')??'application/json').header('Cache-Control','no-store');
-      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);clearTimeout(timeout);return '';}
+      if(!response.body){record(response.status);await settle({inputTokens:null,outputTokens:null},true);abort.close();return '';}
       const source=Readable.fromWeb(response.body as never);
       const stream=observeUsage((response.headers.get('content-type')??'').includes('text/event-stream'),async usage=>{record(usage.failed?502:abort.signal.aborted?499:response.status,usage);await settle(usage,abort.signal.aborted||usage.failed||usage.inputTokens===null||usage.outputTokens===null);});
-      source.once('error',()=>{record(502);abort.abort();stream.destroy();});stream.once('close',()=>{clearTimeout(timeout);source.destroy();});
+      source.once('error',()=>{record(502);abort.abort();stream.destroy();});stream.once('close',()=>{abort.close();source.destroy();});
       reply.raw.once('close',()=>stream.destroy());
       source.pipe(stream);return reply.send(stream);
-    }catch{record(502);await settle({inputTokens:null,outputTokens:null},true);clearTimeout(timeout);return reply.code(502).send({error:{message:'Provider unavailable or timed out',type:'provider_error'}});}
+    }catch(error){
+      const status=error instanceof GatewayContextError?error.statusCode:502;
+      const measured=error instanceof GatewayContextError?error.usage as {input_tokens?:number;output_tokens?:number}|undefined:undefined;
+      const tokens=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;
+      const usage={inputTokens:tokens(measured?.input_tokens),outputTokens:tokens(measured?.output_tokens)};
+      record(status,usage);await settle(usage,status>=500&&(usage.inputTokens===null||usage.outputTokens===null));abort.close();
+      return reply.code(status).send({error:{message:error instanceof GatewayContextError?error.message:'Provider unavailable or timed out',type:error instanceof GatewayContextError?'context_error':'provider_error'}});
+    }
   }});
   if(options.uiRoot)await app.register(staticPlugin,{root:resolve(options.uiRoot),prefix:'/'});
   app.addHook('onClose',async()=>{serviceClosing=true;clearTimeout(startupCheckTimer);await maintenance.close();await approval.close();await extension.close();await host.close();await proxy.shutdown();});

@@ -1,3 +1,5 @@
+import { retryQuotaCall, QuotaTransportError, transientQuotaStatus } from './quota/retry.js';
+import { nativeCredentialSchema, nativeConflict, type NativeProvider } from './native-accounts.js';
 import { readConfig } from './agent-connections.js';
 import { CursorProvider,cursorCatalog } from './cursor.js';
 // Router 层：受管 CLIProxyAPI 进程、管理接口、已保存账号与模型路由表。
@@ -28,9 +30,9 @@ const accountSchema = z.object({
 const modelSchema = z.object({id: z.string(), display_name: z.string().optional(), type: z.string().optional(), owned_by: z.string().optional()});
 const apiCallSchema = z.object({status_code: z.number().int(), header: z.record(z.array(z.string())).default({}), body: z.string().default('')});
 export function revokedCredential(file:{status?:string;status_message?:string}){return file.status==='error'&&/\b(?:invalid_grant|refresh_token_revoked|refresh_token_reused|refresh_token_expired)\b/i.test(file.status_message??'');}
-export type LocalAccount = {id: string; provider: string; label: string; status: string; disabled: boolean; unavailable: boolean; isDuplicate?: boolean; models?: string[]};
+export type LocalAccount = {id: string; provider: string; label: string; status: string; disabled: boolean; unavailable: boolean; isDuplicate?: boolean; modelError?:string; models?: string[]};
 /** `provider` 为承接该模型的登录 Provider；未知类型（如 Gemini API Key）为空。 */
-export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor';textOnly?:boolean};
+export type LocalModel = {id: string; displayName?: string; provider?: LoginProviderId | 'cursor';textOnly?:boolean;capabilities?:{text:boolean;tools:boolean;images:boolean}};
 export type CLIProxyOptions = LoginOptions & {secrets?:{get:(name:string)=>Promise<string>;set:(name:string,value:string)=>Promise<void>}};
 
 export class CLIProxyManager {
@@ -110,13 +112,14 @@ export class CLIProxyManager {
     const response = await fetch(`http://127.0.0.1:${this.port}${management ? '/v0/management' : '/v1'}${path}`, {
       method, headers: {Authorization: `Bearer ${management ? this.managementKey : this.key}`, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), this.requests.signal]), redirect: 'error',
-    }).catch(() => {throw new Error('无法连接 Local Agent，请检查服务状态后重试。');});
+    }).catch(() => {throw path==='/api-call'?new QuotaTransportError('额度查询连接失败或超时。'):new Error('无法连接 Local Agent，请检查服务状态后重试。');});
     if (!response.ok) {
       await response.body?.cancel();
+      if(path==='/api-call'&&transientQuotaStatus(response.status))throw new QuotaTransportError(`额度上游连接失败（HTTP ${response.status}），网关已响应。`);
       if(path==='/api-call')throw new Error(response.status>=500?`额度上游连接失败（HTTP ${response.status}），网关已响应。请稍后重试或检查网络与代理；不代表账号授权丢失。`:`额度查询网关请求失败（HTTP ${response.status}），请刷新网关状态后重试。`);
       throw new Error(`Local Agent 接口请求失败（HTTP ${response.status}）。请检查网关状态后重试。`);
     }
-    return response.json().catch(() => {throw new Error('Local Agent 返回了无效响应，请重启服务后重试。');});
+    return response.json().catch(error => {if(path==='/api-call'&&!(error instanceof SyntaxError))throw new QuotaTransportError('额度查询连接中断或超时。');throw new Error('Local Agent 返回了无效响应，请重启服务后重试。');});
   }
   start(): Promise<LocalAgentSnapshot> {
     if (this.startTask) return this.startTask;
@@ -379,6 +382,24 @@ export class CLIProxyManager {
     try{return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;}
     catch{throw new Error('读取账号授权失败，请重新连接该账号。');}
   }
+  async nativeAccounts(provider:NativeProvider) {
+    return Promise.all(this.accounts.filter(a=>a.provider===provider&&!a.disabled&&!a.unavailable).map(async account=>{
+      try{const raw=await this.nativeCredentialFile(provider,account.id),parsed=nativeCredentialSchema.safeParse(raw);
+        return {id:account.id,email:parsed.success?parsed.data.email:null,switchable:parsed.success,reason:parsed.success?'':'缺少完整登录凭据（邮箱、令牌或有效期），请重新授权'};
+      }catch{return {id:account.id,email:null,switchable:false,reason:'授权文件暂不可读取'};}
+    }));
+  }
+  private async nativeCredentialFile(provider:NativeProvider,id:string){
+    const account=this.accounts.find(a=>a.id===id),name=this.names.get(id);
+    if(account?.provider!==provider||!name||name.includes('/')||name.includes('\\'))throw nativeConflict('请选择对应客户端的有效账号。');
+    try{return JSON.parse(await readConfig(join(this.root,'cliproxy','auth',name))??'null') as unknown;}
+    catch{throw nativeConflict('读取账号授权失败，请重新连接该账号。');}
+  }
+  async nativeCredential(provider:NativeProvider,id:string,model?:string){
+    const account=this.accounts.find(a=>a.id===id);
+    this.sourceAuth(id,model??account?.models?.[0]??'');
+    return this.nativeCredentialFile(provider,id);
+  }
   async importCredential(provider:'codex'|'claude',credential:Record<string,unknown>,onlyNew=false) {
     await this.start();
     const identity=String(credential.account_id||credential.email||credential.access_token);
@@ -424,12 +445,16 @@ export class CLIProxyManager {
         const quotaProvider = quotaProviders[provider];
         if (!quotaProvider) return;
         const {authIndex, account: info} = this.quotaTargets.get(account.id)!;
-        const call = async (request: QuotaRequest): Promise<QuotaResponse> => apiCallSchema.transform(r => ({statusCode: r.status_code, header: r.header, body: r.body}))
-          .parse(await this.request('/api-call', 'POST', {auth_index: authIndex, method: request.method, url: request.url, header: request.header, data: request.data ?? ''}, true, 45000));
+        const signal=this.requests.signal;
+        const call = (request: QuotaRequest): Promise<QuotaResponse> => retryQuotaCall(async()=>{
+          if(!this.accounts.some(a=>a.id===account.id&&!a.disabled))throw new Error('账号已停用或移除，已停止额度查询。');
+          return apiCallSchema.transform(r => ({statusCode: r.status_code, header: r.header, body: r.body}))
+            .parse(await this.request('/api-call', 'POST', {auth_index: authIndex, method: request.method, url: request.url, header: request.header, data: request.data ?? ''}, true, 45000));
+        },signal,attempt=>this.log(`${provider} 额度连接暂时失败，自动尝试 ${attempt}/5。`));
         const observedAt = new Date().toISOString();
         try {
           const report = await quotaProvider.fetch(call, info);
-          if (!this.names.has(account.id)) return;
+          if (signal.aborted||!this.accounts.some(a=>a.id===account.id&&!a.disabled)||!this.names.has(account.id)) return;
           this.quotas[account.id] = {accountId: account.id, provider, status: 'ok', observedAt, plan: report.plan, windows: report.windows, note: report.note};
         } catch (error) {
           const is401 = error instanceof QuotaHTTPError && error.status === 401;
@@ -442,7 +467,7 @@ export class CLIProxyManager {
             : is403 ? '访问受限（HTTP 403），当前凭据权限不足或账号受限。'
             : error instanceof z.ZodError ? '上游 api-call 响应格式异常。'
             : error instanceof Error ? error.message : '额度查询失败。';
-          if (!this.names.has(account.id)) return;
+          if (signal.aborted||!this.accounts.some(a=>a.id===account.id&&!a.disabled)||!this.names.has(account.id)) return;
           const previous=this.quotas[account.id];
           const lastSuccessfulAt=previous?.status==='ok'?previous.observedAt:previous?.lastSuccessfulAt;
           this.quotas[account.id] = {accountId: account.id, provider, status: 'error', observedAt, windows: lastSuccessfulAt?previous.windows:[], ...(lastSuccessfulAt?{lastSuccessfulAt,plan:previous.plan}:{}), error: message.slice(0, 300)};

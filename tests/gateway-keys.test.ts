@@ -148,3 +148,14 @@ it('explains an upstream region restriction without exposing upstream diagnostic
  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({mode:'region-restricted'})});
  const response=await service.app.inject({method:'POST',url:'/v1/messages',headers:{host:admin.host,authorization:`Bearer ${apiKey}`},payload:{model:'codex/shared-model',messages:[{role:'user',content:'OK'}],max_tokens:16}});expect(response.statusCode).toBe(400);expect(response.json().error.type).toBe('region_not_supported');expect(response.body).toContain('不支持当前地区');expect(response.body).not.toContain('upstream-secret');
 });
+
+it('reports only known capability codes without exposing upstream diagnostics',async()=>{
+ const {service,admin,port}=await setup();const {apiKey}=(await service.app.inject({method:'POST',url:'/api/gateway-keys',headers:admin,payload:{name:'capabilities',models:['codex/shared-model']}})).json();
+ for(const code of ['a2a_structured_output_unsupported','a2a_server_tool_unsupported','a2a_source_policy_blocked','a2a_unknown']){
+  await fetch(`http://127.0.0.1:${port}/fixture`,{method:'POST',body:JSON.stringify({mode:code})});
+  const response=await service.app.inject({method:'POST',url:'/v1/responses',headers:{host:admin.host,authorization:`Bearer ${apiKey}`},payload:{model:'codex/shared-model',input:'OK'}});
+  expect(response.statusCode).toBe(400);expect(response.body).not.toContain('upstream-secret');expect(response.body).not.toContain('private diagnostic');
+  expect(response.json().error.type).toBe(code==='a2a_unknown'?'provider_error':code==='a2a_source_policy_blocked'?'source_policy_blocked':'unsupported_feature');
+  expect(response.json().error.code).toBe(code==='a2a_unknown'?undefined:code);
+ }
+});

@@ -14,7 +14,7 @@ let aliases = JSON.parse(config.match(/^oauth-model-alias: (.+)/m)?.[1] ?? '{}')
 let accounts = [];try {accounts = JSON.parse(readFileSync(file, 'utf8'));} catch {}
 let aliasWrites=0;let fixtureOptions={};try{fixtureOptions=JSON.parse(readFileSync(join(directory,'fixture-options.json'),'utf8'));}catch{}
 const fixtureStarted=Date.now();
-const sessions = new Map();let fixtureMode = 'wait';let cancelCount = 0;let callbackCount = 0;const apiCalls = [];
+const sessions = new Map();let fixtureMode = 'wait';let quotaBridgeFailures=0;let quotaBridgeAttempts=0;let cancelCount = 0;let callbackCount = 0;const apiCalls = [];
 const saveAccount = session => {
  const name = `${session.provider}-user@example.test.json`;
  accounts = [...accounts.filter(a => a.name !== name), {name, provider:session.provider, auth_index:`idx-${session.provider}`, email:'user@example.test',status:'active',disabled:false,unavailable:false,id_token:{secret:'never-expose',chatgpt_account_id:'acct-fixture',plan_type:'plus'},project_id:session.provider==='antigravity'?'proj-fixture':undefined,access_token:'never-expose',path:'/private/credentials'}];
@@ -24,8 +24,8 @@ const server = createServer(async(req,res) => {
  res.setHeader('content-type','application/json');const url=new URL(req.url,`http://127.0.0.1:${port}`);
  const send=(status,value)=>{res.statusCode=status;res.end(JSON.stringify(value));};
  if(url.pathname==='/fixture') {
-  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);fixtureMode=input.mode??fixtureMode;if(input.modelSets){for(const a of accounts)if(input.modelSets[a.provider])a.models=input.modelSets[a.provider];writeFileSync(file,JSON.stringify(accounts));}if(input.complete)for(const s of sessions.values()){if(s.status==='wait'){s.status='ok';saveAccount(s);}}}
-  return send(200,{cancelCount,callbackCount,apiCalls});
+  if(req.method==='POST'){let body='';for await(const c of req)body+=c;const input=JSON.parse(body);fixtureMode=input.mode??fixtureMode;if(input.quotaBridgeFailures!==undefined){quotaBridgeFailures=input.quotaBridgeFailures;quotaBridgeAttempts=0;}if(input.modelSets){for(const a of accounts)if(input.modelSets[a.provider])a.models=input.modelSets[a.provider];writeFileSync(file,JSON.stringify(accounts));}if(input.complete)for(const s of sessions.values()){if(s.status==='wait'){s.status='ok';saveAccount(s);}}}
+  return send(200,{cancelCount,callbackCount,apiCalls,quotaBridgeAttempts});
  }
  const management=url.pathname.startsWith('/v0/management/');
  if(req.headers.authorization!==`Bearer ${management?managementKey:key}`)return send(401,{error:'denied'});
@@ -45,6 +45,7 @@ const server = createServer(async(req,res) => {
   const account=accounts.find(a=>!a.disabled&&(!req.headers['x-token-flow-auth']||a.name===req.headers['x-token-flow-auth'])&&accountModels(a).some(m=>m.id===input.model));
   if(!account)return send(404,{error:'model unavailable'});
   if(fixtureMode==='region-restricted')return send(400,{error:{message:'User location is not supported for the API use.',debug:'upstream-secret-never-expose'}});
+  if(fixtureMode.startsWith('a2a_'))return send(400,{error:{code:fixtureMode,message:'upstream-secret-never-expose',debug:'private diagnostic'}});
   if(path==='/messages/count_tokens')return send(200,{input_tokens:7});
   const usage={input_tokens:7,output_tokens:3};
   const response={id:'fixture-response',object:'response',status:'completed',model:input.model,usage,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:account.provider}]}]};
@@ -80,13 +81,13 @@ const server = createServer(async(req,res) => {
    return send(200,{status:'ok',state,flow:'device',expires_in:600,url:fixtureMode==='unsafe'?'https://evil.test/login':`https://copilot.tencent.com/login?platform=CLI&state=${state}`});
   }
   if(provider==='zcode'){
-   return send(200,{status:'ok',state,url:fixtureMode==='unsafe'?'https://evil.test/oauth':`https://chat.z.ai/api/oauth/authorize?state=${state}`});
+   return send(200,{status:'ok',state,flow:'device',expires_in:300,url:fixtureMode==='unsafe'?'https://evil.test/oauth':`https://chat.z.ai/api/oauth/authorize?state=${state}&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapi%2Fv1%2Foauth%2Fcli%2Fcallback%2Fzai`});
   }
   if(provider==='doubao'){
    return send(200,{status:'ok',state,url:fixtureMode==='unsafe'?'https://evil.test/auth':`https://www.marscode.cn/authorization?state=${state}`});
   }
   if(provider==='trae'){
-   const target=encodeURIComponent(`https://www.trae.ai/authorization?state=${state}`);
+   const target=encodeURIComponent(`https://www.trae.ai/authorization?login_trace_id=${state}&auth_callback_url=http%3A%2F%2F127.0.0.1%3A1455%2Fauthorize`);
    return send(200,{status:'ok',state,url:fixtureMode==='unsafe'?'https://evil.test/login':`https://www.trae.ai/login?redirect_url=${target}`});
   }
   return send(200,{status:'ok',state,url:fixtureMode==='unsafe'?'https://evil.test/oauth/authorize':`${provider==='antigravity'?'https://accounts.google.com/o/oauth2/v2/auth':`https://${provider==='codex'?'auth.openai.com':'claude.ai'}/oauth/authorize`}?state=${state}&code_challenge=fixture`});
@@ -94,7 +95,7 @@ const server = createServer(async(req,res) => {
  if(path==='/get-auth-status'){const s=sessions.get(url.searchParams.get('state'));return send(200,{status:s?.status??'error',error:'opaque-error-secret-never-expose'});}
  if(path==='/oauth-session'){const s=sessions.get(url.searchParams.get('state'));const cancelled=s?.status==='wait';if(cancelled){s.status='error';cancelCount++;}return send(200,{status:'ok',cancelled});}
  if(path==='/api-call') {
-  if(fixtureMode==='quota-bridge-error')return send(502,{error:'upstream-secret network failed'});
+  quotaBridgeAttempts++;if(quotaBridgeFailures-->0||fixtureMode==='quota-bridge-error')return send(502,{error:'upstream-secret network failed'});
   // Stands in for provider usage endpoints. $TOKEN$ must be substituted upstream, never sent by the desktop.
   let body='';for await(const c of req)body+=c;const input=JSON.parse(body);apiCalls.push({authIndex:input.auth_index,url:input.url,rawToken:Object.values(input.header??{}).some(v=>String(v).includes('$TOKEN$'))});
   if(fixtureMode==='quota-empty'&&input.url.includes('api.kimi.com'))return replyEmpty();

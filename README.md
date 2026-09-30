@@ -4,6 +4,26 @@
 
 ## A2A 点选接入与网关维修
 
+A2A 接入只借用来源的模型服务，等同于为本地客户端配置模型 API。工具定义由本地客户端提供，网关转换模型请求、工具调用与结果；Shell、文件、MCP、审批及沙箱仍由本地客户端管理。不会导入源 Agent 的工具或权限，也不会修改目标客户端的人工/自动审批模式。自动审批是否可用仍取决于客户端、模型及其审批请求的兼容性。
+
+Codex 接入保留原有审批、沙箱、项目信任和工具配置；旧版本的当前 `profile` 及其权限也保留，仅同步该档案的模型路由。新版本通过 `--profile` 选择的独立配置文件保持原样；如其中指定了其他模型接口，可使用“手动接入”的命令覆盖模型路由，继续保留该档案的权限。Qoder 只添加自定义供应商，WorkBuddy 只添加模型，Claude Code 只修改模型和接口字段。来源不支持的服务端网页搜索仍按能力提示关闭，这不改变本地工具的审批权限。
+
+`npx tsx scripts/local-approval-smoke.ts` 使用已安装的 Codex、隔离配置和模拟 Responses 模型，验证原有本地审批/沙箱设置生效、拒绝后不写文件、允许后写入测试文件、两种结果均回传模型。不读取原账号或消耗真实额度；该测试不代表所有来源模型或其他客户端的自动审批已验证。旧接入记录若曾取消 Codex 的 profile，可先还原原接口再重新接入，恢复备份中的配置选择。
+
+Codex 来源接入 Claude Code 时复用内置 CLIProxyAPI：`/v1/messages` → `internal/translator/codex/claude` → Codex executor → Claude Messages/SSE。Qoder / WorkBuddy 复用这些转换器处理 Responses 中间格式，再调用各自的源执行器。App 不另写审批分类器，最终审批与工具执行仍由 Claude Code 控制。
+
+运行 `npm run test:claude-compat` 复用 CLIProxyAPI 的 Codex/Claude、OpenAI/Claude 转换测试及已有 Qoder/WorkBuddy sidecar 测试，不消耗真实模型额度。这些测试验证协议适配，不验证真实 Claude Code Auto Mode。接入预检明确返回 `compatibility.autoMode: unverified`，页面区分“模型已配置”和“自动审批可用”。
+
+2026-09-23 修复 Qoder 审批链路的两处参数丢失：系统提示必须保留在原生 `messages` 中，仅传顶层 `system` 不足以让服务端读取审批规则；Claude Messages 未请求 thinking 时不应继承 Codex 默认思考强度，Qoder 也必须落实显式 `reasoning_effort: none`。两处修复均位于现有 sidecar overlay，复用 CLIProxyAPI 的转换器及 thinking 解析器。主任务显式开启的 thinking 保留，审批文本和停止序列原样传递，不生成或改写放行结果。
+
+本机 Claude Code 2.1.278 + `qoder/kmodel_latest` 实测：原生 Auto Mode 审批约 7.4 秒完成，随后 Bash 在隔离目录写入测试文件，并回传工具结果；独立重放原生分类器请求，允许案例约 11 秒返回 `<block>no</block>`，模拟越权外传案例约 7.7 秒返回 `<block>yes</block>`（只评估，不执行该命令）。期间出现过上游 500，原生客户端重试后完成；这份结果只覆盖该版本、模型和测试案例，不将其他接入自动标记为已验证。
+
+2026-09-24 本地审批保留版 macOS 测试包位于 `release/local-client-policy/mac-arm64/token-flow.app`。已通过 197 项测试、类型检查和构建；打包版验证了启动、模型接入、配置档案与权限保留、完整还原。真实 Codex 使用模拟 Responses 模型验证了本地拒绝/允许和工具结果回传。构建保留 `node:` 内置模块前缀，修复 `node:sqlite` 被改写为外部包导致的启动失败。当前运行的旧进程不会热更新，需完全退出旧 App 后打开此包。
+
+组合 review 已补充共享来源能力字典：Qoder / WorkBuddy 接入 Codex 时关闭不支持的服务端网页搜索，保留客户端工具与审批权限；不支持的工具和结构化输出明确返回错误。WorkBuddy → Codex 的真实调用仍被来源端策略 `11128` 阻断，不能视为适配通过。完整矩阵、已修复问题及真实/模拟验证边界见 [A2A 组合验收](docs/a2a-review-2026-09-23.md)。
+
+若 Claude Code 显示 `could not evaluate` 或某模型 `timed out`，说明审批请求未完成，不能归因为命令危险或 Git 权限不足。新版免费 classifier 的网关兼容通知是另一项能力提示。App 的维修审批模型与 Claude Code 分类器互不替代；需要继续工作时可显式运行 `claude --permission-mode default` 新开人工审批会话，保留现有配置。自动审批的修复需要该请求的耗时、响应格式与模型支持证据；不能用放宽权限或拆分命令代替修复。参见 [Claude Code 服务端分类器说明](https://code.claude.com/docs/en/permission-modes#server-side-classifier-review)。
+
 首页只显示有效且有可用模型的授权，按剩余额度降序排列（多个窗口取最低剩余比例，未知额度排最后）。点击源账号直接弹出模型列表；“登录其他 Agent”进入模型中心，新授权完成后自动返回。顶部可直接指定维修师傅。目标正在运行时，确认一次即可备份并写入，完成后提示重启，详细配置与额度收在展开项中。
 
 启动后默认进入 **A2A 接入**：点亮源账号授权 → 选择该账号支持的模型 → 选择 Codex、Claude Code 或 WorkBuddy → 备份并接入。目标 Agent 下次启动时使用所选模型，Responses、Messages 与 Chat Completions 的转换在后台完成。源账号被停用、失效或删除时拒绝调用，不会自动借用另一个账号。
@@ -12,7 +32,7 @@
 
 直接接入修改用户级 `config.toml` / `settings.json` / WorkBuddy `models.json`，保留其他设置、原 Provider 和完整原文件备份。Codex 的当前 profile 暂时取消选择，原 profile 内容保留；完整还原恢复原文件。自动生成仅支持目标协议和所选源账号模型的客户端 Key，可设置 token 额度。此 Key 写入权限为 0600 的目标配置，原厂商 OAuth 凭据不写入目标 Agent。WorkBuddy 只新增自定义模型，保留原模型、账号登录与额度；重启后在模型菜单选择新增项。文件位置遵循 `WORKBUDDY_CONFIG_DIR` / `CODEBUDDY_CONFIG_DIR`，默认 `~/.workbuddy/models.json`。OpenAI 兼容的其他应用仍通过手动接入配置使用。
 
-Cursor 暂不提供本机直连接入。模型中心现通过官方 SDK 独立授权，提供 `cursor/<官方模型 ID>` 的实验性文本 API；并不等同于 IDE 订阅的原始模型接口。其 BYOK 请求经过 Cursor 云端，不能访问本机 loopback；因此当前本机网关产品不展示 Cursor 接入目标。参见 [Cursor 官方说明](https://prod.cursor.com/help/models-and-usage/api-keys) 和 [WorkBuddy 自定义模型](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Model)。
+Cursor 暂不提供本机直连接入。模型中心现通过官方 SDK 独立授权，提供 `cursor/<官方模型 ID>` 的文本与客户端工具适配 API；并不等同于 IDE 订阅的原始模型接口。其 BYOK 请求经过 Cursor 云端，不能访问本机 loopback；因此当前本机网关产品不展示 Cursor 接入目标。参见 [Cursor 官方说明](https://prod.cursor.com/help/models-and-usage/api-keys) 和 [WorkBuddy 自定义模型](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Model)。
 
 备份位于数据目录 `agent-backups/`（含完整配置，按敏感文件保管）。先持久化预备记录，再原子替换配置。检查进程、配置指纹、符号链接和并发操作锁；已运行的 Agent 不会被终止；用户确认后可写入接入设置并在完成后重启。外部修改不会被自动覆盖。还原后撤销接入 Key。若异常退出留下锁，需先确认没有配置操作，再人工处理锁文件。进程检查是保守快照，不能阻止外部应用在检查后启动；项目配置、命令行参数、环境变量和组织策略可能覆盖用户级设置。
 
@@ -32,7 +52,29 @@ Qoder IDE 作为目标时使用官方 Settings → Models → Add → OpenAI Com
 
 Qoder / WorkBuddy 使用同一 Responses 中间层：目标 Agent 请求 → Responses 请求 → 源协议；源事件 → Responses 事件 → 目标协议。转换在进程内完成，不再向自身接口发起第二次推理；Key 鉴权、固定源账号、用量结算仍只执行一次。`/v1/responses` 直接输出该层，Claude Code 使用 `/v1/messages` 适配输出。其他来源仍沿用原执行器，不能据此宣称全部来源已验证互通。
 
+跨 Agent 适配按“客户端协议 → 统一契约 → 来源适配”组织，不为每对来源和目标复制实现。`sdk/translator` 已有的注册表负责消息、工具定义、工具调用、工具结果、thinking 和流事件；`patches/cliproxy/agent_responses.go` 的 `agentParameterFields` 只补充原转换器遗漏的控制字段：
+
+| 调用方字段 | Responses 中间字段 | 原生 Chat 字段 |
+| --- | --- | --- |
+| `max_output_tokens` / `max_completion_tokens` / `max_tokens` | `max_output_tokens` | `max_tokens` |
+| `temperature` / `top_p` / `parallel_tool_calls` | 同名字段 | 同名字段 |
+| `stop` / `stop_sequences` | 无对应字段，随原请求保留 | `stop` |
+
+审批是这个契约上的一种模型请求，不另造通用“批准执行”工具。完整规则、待评估操作及生成设置必须保留，模型返回的允许、拒绝或残缺文本原样回到客户端，由客户端自己的审批流程解析；超时或传输失败保持失败。字段映射不会把一个客户端的审批决定自动变成另一个客户端的执行授权。
+
+`tests/sidecar/agent_contract_test.go` 用同一套数据跑两个来源 × 六种客户端请求配置 × 三种审批响应，共 36 个用例，覆盖系统规则、上下文、思考设置、输出上限、停止序列、零值和返回文本。新增来源只需加入原生适配和同一验收表。该测试证明传输契约；模型判断质量、延迟和客户端资格仍需独立实测。真实测试也复用同一入口：`PROBE_AUTO=1 npx tsx scripts/source-live-smoke.ts --live workbuddy` 或 `--live qoder`，无需各写一套测试程序。
+
+2026-09-23 同一真实验收脚本验证 `workbuddy/glm-5.1` → Claude Code 2.1.278：审批请求约 7 秒完成，Bash 实际写入隔离测试文件，工具结果回传，三次模型请求均返回 200。该结论只覆盖本次模型和案例，不自动推及 WorkBuddy 的所有模型。
+
+Qoder / WorkBuddy 的 Responses 长会话由桌面网关补齐：支持完整 `input`、`previous_response_id`、`/v1/responses/compact`、Codex `compaction_trigger`（remote compaction v2），以及 `context_management` 自动压缩。普通轮次只有一次推理；需要压缩时，使用同一模型、同一来源账号生成历史摘要，压缩和回答的用量一起计入原客户端 Key。用户要求与指令原样保留，近期消息和未结束的工具调用保留完整，较早的执行记录才会摘要化。摘要不完整、为空或未缩短上下文时返回错误，原历史不变。此能力不等同于厂商原生隐藏推理状态的无损迁移。
+
+上下文记录在应用数据目录 `gateway-context/` 中加密保存，按 Key、来源和模型隔离，支持应用重启后续接；`store:false` 不保存该次响应历史。压缩输出含网关自己的认证加密项，回传同一网关即可恢复，不可直接交给其他厂商解密。压缩本身不保存输入副本；既有响应记录和客户端原始历史不会被覆盖。没有精确分词接口时，自动阈值采用 UTF-8 字节数上界估算，可能提前压缩；只有请求声明 `context_management` 时才启用。已有原生 Responses 来源保留原接口。网关请求及单条上下文上限为 16 MiB。
+
+`npx vitest run tests/gateway-context.test.ts tests/gateway-context-service.test.ts` 验证持久续接、压缩、工具完整性、跨 Key 隔离、预算和 SDK 兼容。`npx tsx scripts/context-codex-smoke.ts`（或追加 `workbuddy/fixture`）使用本机 Codex CLI 和隔离模拟模型验证连续工具调用 → 自动压缩 → 返回压缩项 → 继续完成，不读取原登录、不使用真实模型额度。
+
 `npm run test:sidecar-agents`（旧命令 `test:sidecar-qoder` 仍可用）覆盖这两个真实执行器的流式 Messages、非流式回退、工具调用、系统提示和工具结果保留、Responses 格式、取消与异常流。上游网络使用 fixture，不消耗额度。需真实验证时，显式运行 `npx tsx scripts/source-live-smoke.ts --live workbuddy` 或 `--live qoder`，也可继续传入模型 ID、auth 目录、Claude 可执行文件路径。会使用少量额度，验证公开 Responses / Messages 接口，以及真实 Claude Code 两轮流式请求、读取临时文件并回传工具结果。测试只在隔离目录复制访问令牌，不复制或刷新共享 refresh token，不修改原 Agent 配置，并在结束后清理。默认授权目录为 macOS 的 `desktop-browser-agent/cliproxy/auth`。
+
+自动审批端到端验收复用同一脚本：`PROBE_AUTO=1 npx tsx scripts/source-live-smoke.ts --live qoder`。该模式使用已安装 Claude Code 的 Auto Mode 资格，临时覆盖子进程的模型路由；不预先允许 Bash。只有检测到审批请求、临时文件实际写入和工具结果回传才通过，普通文本回答或 CLI 退出码 0 不足以通过验收。会消耗真实模型额度，生成的测试文件与访问令牌副本在结束时清理。
 
 ## 界面与桌面应用（2026-09-22）
 
@@ -50,7 +92,7 @@ macOS 应用使用融合标题栏和原创 Dock 图标，启动时加载完成�
 
 ## 启动
 
-需要 Node.js 22.12+、Go 1.26+（仅编译 CLIProxyAPI 时需要）。
+需要 Node.js 22.19+、Go 1.26+（仅编译 CLIProxyAPI 时需要）。上游获取脚本会检出固定版本并应用仓库中的来源适配补丁；不需要复制开发者本机的 `upstream/` 目录。重复执行不会重复应用补丁，遇到本地改动冲突会停止并保留工作树。
 
 ```bash
 npm ci
@@ -68,7 +110,7 @@ Electron 下载连接失败时，可使用 `ELECTRON_MIRROR=https://npmmirror.co
 4. 「验证 Key」只读取模型目录，不产生模型调用。「发送测试请求」会调用选中协议并消耗少量模型额度。
 5. 在 **API 总览** 查看真实调用。统计限于本次运行，保留最近 100 条元数据；不记录提示词、返回文本或密钥。未返回 usage 的调用用量显示未知，不估算余额，也不把不同厂商额度相加。
 
-Codex 使用 `/v1/responses`，提供 HTTP / SSE 和 `/v1/responses/compact`；生成配置关闭 WebSocket。Claude Code 使用 `/v1/messages` 和 `/v1/messages/count_tokens`，接受 Bearer 或 `x-api-key`，两个头同时出现且不同则拒绝。OpenAI 兼容 Agent 使用 `/v1/chat/completions` 或 Responses。工具调用、流式事件与各厂商请求格式转换由内置 CLIProxyAPI 实现，桌面服务提供统一授权、命名空间和流量记录，不额外串联一轮模型请求。
+Codex 使用 `/v1/responses`，提供 HTTP / SSE 和 `/v1/responses/compact`；生成配置关闭 WebSocket。Claude Code 使用 `/v1/messages` 和 `/v1/messages/count_tokens`，接受 Bearer 或 `x-api-key`，两个头同时出现且不同则拒绝。OpenAI 兼容 Agent 使用 `/v1/chat/completions` 或 Responses。工具调用、流式事件与各厂商请求格式转换由内置 CLIProxyAPI 实现，桌面服务提供统一授权、命名空间、流量记录和上述长会话适配；普通推理不额外串联模型请求。
 
 客户端配置参考 [Codex 官方配置](https://developers.openai.com/codex/config-reference) 和 [Claude Code 官方网关文档](https://code.claude.com/docs/en/llm-gateway)。适配协议不意味着所有模型具有相同的工具、图片、推理能力；实际兼容性取决于模型和上游服务。当前提供本机访问，不包含跨设备共享、余额交易或额度结算。
 
@@ -133,7 +175,7 @@ Provider 设置请求：
 }
 ```
 
-网关不自行重写模型协议。转换、OAuth、多账号路由复用 CLIProxyAPI；token-flow 提供本机鉴权、Provider 选择与浏览器操作的任务 API。不要把 CLIProxyAPI 的管理凭据当作 API Key。
+模型协议转换、OAuth、多账号路由复用 CLIProxyAPI；桌面网关负责 Qoder / WorkBuddy 的 Responses 会话续接与压缩；token-flow 提供本机鉴权、Provider 选择与浏览器操作的任务 API。不要把 CLIProxyAPI 的管理凭据当作 API Key。
 
 OpenAI 兼容的本机客户端请在 **模型中心 → API Keys** 创建独立 Key，使用该页的 Base URL（默认 `http://127.0.0.1:9527/v1`）。按「全部 → 提供商 → 模型」勾选范围，支持半选；全选只授权当前模型，新增模型需再次勾选。`GET /v1/models` 只列出该 Key 已授权且当前可用的模型；Responses / Chat 请求在转发前检查精确模型 ID，越权返回 403、停用 Key 返回 401、模型离线返回 503。Key 无工作台管理权限，且始终路由到本机网关，不随任务使用的 Custom 接口变化。
 
@@ -259,15 +301,17 @@ Antigravity 排错：Responses、工具和图片请求都通过 CLIProxyAPI 的�
 
 Qoder 读取实际响应的 `userQuota`（套餐 Credits）与 `orgResourcePackage`（组织资源包）；比率优先按 used / total 或 cap 计算。未知额度不伪装为有效余额。Kimi 的 HTTP 200 空对象只表示官方未返回额度，不能断言无套餐或余额为零；界面显示未知，兼容 Code 官方 quota.usages 中的 5h / 7d / 月度比例窗口。通用名称“Kimi”不能识别重复账号，不据此建议删除凭据。
 
-Cursor 使用 `@cursor/sdk` 1.0.31 的官方浏览器授权，创建名为 token-flow 的独立 SDK Key，默认有效期以官方 SDK 为准。桌面版将该账号保存到 safeStorage 加密文件 `secrets/cursor-account.bin`；不读取或改写 Cursor IDE 登录。模型列表按账号调用 `Cursor.models.list()`，不硬编码。官方 SDK 没有账户剩余额度接口，卡片提供官方用量页，调用 token 在本应用 API 总览记账。无返回用量时维持既有未知用量保护，绝不估算成零。
+Cursor 使用 `@cursor/sdk` 1.0.31 的官方浏览器授权，创建名为 token-flow 的独立 SDK Key，默认有效期以官方 SDK 为准。桌面版将该账号保存到 safeStorage 加密文件 `secrets/cursor-account.bin`；不读取或改写 Cursor IDE 登录。模型列表按账号调用 `Cursor.models.list()`；SDK 目录失败时通过官方 `GET https://api.cursor.com/v1/models` 重试，不硬编码模型。临时错误保留上次目录，认证失败清空目录并提示重新授权。官方返回 `403 plan_required` 时显示套餐限制，不重试绕过，也不伪造可用模型。个人套餐剩余额度暂无已确认的公开查询接口，卡片提供官方用量页，调用 token 在本应用 API 总览记账。无返回用量时维持既有未知用量保护，绝不估算成零。
 
-Cursor 文本来源通过主网关 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 调用，仍校验客户端 Key、模型、协议、源账号和 token 预算；内部 sidecar 的 8317 直连不包含 Cursor。创建临时空目录，显式 `tools: []`、空 MCP/子 Agent、`settingSources: []`，完成后清理会话文件。不提供本机文件或 shell 权限。
+Cursor 来源通过主网关 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 调用，仍校验客户端 Key、模型、协议、源账号和 token 预算；内部 sidecar 的 8317 直连不包含 Cursor。创建临时空目录，仅开启 SDK 的 `mcp` 工具组、注册客户端声明的工具，并使用空 MCP 配置/子 Agent、`settingSources: []`，完成后清理会话文件。不提供本机文件或 shell 权限。
 
-能力边界：SDK 接收完整文本转录而非原始推理消息；不支持外部工具调用、图片、previous_response_id、Responses compact、count_tokens、生成长度上限等参数，收到这些请求会明确返回 400；不静默忽略。SSE 当前在完成后转换输出，不是逐 token 实时透传。因此不允许该来源参与需要工具的 A2A 自动配置或网关维修。用于 API 文本消费者，不宣称完整替代编码 Agent 的模型后端。
+工具桥接：SDK `local.customTools` 接收工具调用后立即结束本轮，将函数名、参数和调用 ID 转换为客户端协议；工具由接入 Agent 执行，下一轮带回结果。支持 Responses 函数及自定义文本工具（例如 apply_patch）、Chat Completions 函数和 Messages tool_use/tool_result。工具审批仍由客户端负责。A2A 配置可使用 Cursor 来源，维修模型通过主进程的受限 Cursor 传输调用，避免误发给没有 Cursor 的 sidecar。
+
+会话续接及 `/v1/responses/compact` 复用网关按 Key/源账号/模型隔离的加密上下文。Token 统计优先使用运行结果，缺失时查询 SDK `getUsage()`；查询失败维持未知用量保护。`max_tokens` / `max_output_tokens` 是提示性预算，SDK 无法保证硬性 Token 上限，响应通过 `X-Token-Flow-Output-Limit` 明示。图片、服务端工具、严格 JSON 输出、采样参数及 count_tokens 尚未适配，明确拒绝。SSE 在一轮完成或工具交接后转换输出，不是逐 Token 实时透传。
 
 首页和“Agent 接入”均不提供 Cursor 目标或公网网关配置。Qoder IDE 可作为接入目标，生成本机 Base URL、Key 与模型 ID 后，在 Settings → Models → Add 添加 OpenAI Compatible 模型；账号登录与内置模型保留。
 
-验证：`tests/cursor.test.ts` 覆盖独立登录、取消后迟到结果、重启恢复、停用/移除、三种协议、token（含缓存）记账及工具拒绝。`scripts/cursor-smoke.mjs` 验证实际打包应用、真实 SDK 授权地址准备/取消、Qoder 与 Kimi 界面以及 Qoder 本机目标配置生成、Cursor 目标移除；不完成真实账号授权，不发起真实 Cursor 计费推理。SDK 来源与计费：[官方文档](https://cursor.com/docs/sdk/typescript)；目标限制：[官方 BYOK 说明](https://prod.cursor.com/help/models-and-usage/api-keys)。
+验证：`tests/cursor.test.ts` 覆盖独立登录、取消后迟到结果、重启恢复、停用/移除、三种协议的工具交接/结果回传、token（含缓存）记账、官方目录重试、四种 A2A 目标配置及维修模型路由。`scripts/cursor-smoke.mjs` 验证实际打包应用、真实 SDK 授权地址准备/取消、Qoder 与 Kimi 界面以及 Qoder 本机目标配置生成、Cursor 目标移除；不完成真实账号授权，不发起真实 Cursor 计费推理。SDK 来源与计费：[官方文档](https://cursor.com/docs/sdk/typescript)；目标限制：[官方 BYOK 说明](https://prod.cursor.com/help/models-and-usage/api-keys)。
 
 模型中心默认显示紧凑的账号与额度概览，点击提供商展开管理。A2A 目标现包含 Qoder IDE 的官方自定义模型接入引导：生成源账号绑定 Key，再在 Qoder Settings → Models 添加 OpenAI Compatible / Chat Completions 模型；原生账号登录保留。Qoder CLI 使用其 `/model → Custom` 向导，能力以版本和账号目录为准。详情与验证边界见 [本轮验证记录](artifacts/model-center/review.md)。
 
@@ -281,8 +325,18 @@ WorkBuddy 接入写入原生根数组格式的 `~/.workbuddy/models.json`，保�
 
 额度恢复：账号授权持久化在应用数据目录的 `cliproxy/auth`，启动网关后重新加载，不依赖辅助浏览器。额度需要在线查询；查询失败保留本次运行中上次成功的额度窗口并标注历史时间，不作为当前额度参与来源排序。重启不从磁盘恢复额度快照，会重新查询。额度桥接返回 5xx 时提示额度上游连接失败，不再误报 OAuth 回调端口冲突；真实网关端口占用仍由启动检查拒绝接管。
 
-### Codex 多账号切换
+### 多账号切换（Codex / Claude Code / 反重力）
 
 辅助工具中的「多账号切换」会读取本地池内的 Codex 授权及额度，选择账号与默认模型后，将完整 OAuth 凭据写入 `CODEX_HOME/auth.json`，并将用户配置设为 OpenAI / 文件认证。原钥匙串保持不变；原认证文件与配置以仅当前用户可读的备份保存，可在同页还原。切换不会删除或禁用本地池中的账号，也不改变其他 Agent 的接入。
 
 缺少刷新凭据的账号需重新授权。已受 A2A 管理的 Codex 必须先还原接口。运行中只在用户确认后写入，完成后需重启 Codex；项目设置、启动参数和系统管理策略仍可能覆盖用户级配置。页面显示的是已写入的本机登录，不代表现有进程已加载新账号。测试使用隔离目录，未自动替换真实用户登录。
+
+Claude Code 和反重力在同一页面提供独立账号页签，复用模型中心已有授权和额度。两者都要求完全退出客户端后切换，并在重新打开客户端后生效；每次切换前保存仅当前用户可读的原登录备份，连续切换仍保留最初登录，可在同页还原。凭据不返回前端，账号池保持不变。
+
+- Claude Code：macOS 写入对应配置目录的系统钥匙串，其他平台使用 `.credentials.json`；同步账号信息和所选默认模型，保留其他凭据、项目和偏好设置。已有 A2A 接入须先还原，其他接口覆盖配置会阻止切换。终端环境变量和项目级设置仍可能覆盖登录，请在重启后用 `/status` 核对。
+- 反重力：支持 `Antigravity IDE` / `Antigravity` 的统一登录数据库格式，可用 `ANTIGRAVITY_USER_DATA_DIR` 指定用户数据目录。仅事务更新登录相关记录，保留会话历史和其他状态；模型仍在客户端选择。数据库缺失或格式不受支持时明确报错，不会新建或覆盖数据库。
+- 验证：`npx vitest run tests/native-accounts.test.ts tests/native-accounts-service.test.ts`；构建后运行 `npx tsx scripts/native-accounts-smoke.ts`，以隔离账号和目录验证两个新页签的切换、还原和窄屏布局。系统钥匙串由测试替身验证，真实账号在线登录需在对应客户端核对。
+
+存储兼容依据：[Claude Code 认证文档](https://code.claude.com/docs/en/authentication)及本机客户端存储实现；反重力的统一状态格式同时核对了本机 IDE 和 [Antigravity Manager 存储实现](https://github.com/lbjlaq/Antigravity-Manager/blob/main/src-tauri/src/modules/db.rs)。
+
+额度查询遇到网络连接中断、超时或 HTTP 408/500/502/503/504 时，对失败的只读额度请求最多尝试 5 次（包含首次请求），重试间隔为 1、2、4、8 秒。401/403、429 和响应格式错误不自动重试；持续失败仍保留上次成功额度并标为过期。停止网关会取消重试，查询不会自动重启网关或切换账号启停状态。

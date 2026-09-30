@@ -12,7 +12,7 @@ const root=await mkdtemp(join(await realpath(tmpdir()),'native-a2a-'));
 const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
 await mkdir(join(root,'cliproxy'));await mkdir(join(root,'workspace'));
 await writeFile(join(root,'cliproxy','fixture-accounts.json'),JSON.stringify(['qoder','workbuddy','claude'].map(provider=>({name:`${provider}.json`,provider,status:'active',models:['shared-model']}))));
-const paths={codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};
+const paths={qoder:join(root,'qoder','settings.json'),codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};
 const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'fixture-admin',localKey:'fixture-internal',secrets:{get:async()=>'',set:async()=>{}},agentPaths:paths,agentProcesses:async()=>[]});
 try{
  await service.app.listen({port:0,host:'127.0.0.1'});const address=service.app.server.address() as {port:number};const host=`127.0.0.1:${address.port}`;const headers={host,authorization:'Bearer fixture-admin'};await service.proxy.start();

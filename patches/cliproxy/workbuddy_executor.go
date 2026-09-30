@@ -16,6 +16,7 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 )
 
 // WorkBuddyExecutor implements the executor for Tencent WorkBuddy (CodeBuddy) API.
@@ -120,6 +121,9 @@ func (e *WorkBuddyExecutor) executeNativeStream(ctx context.Context, auth *clipr
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		if gjson.GetBytes(bodyBytes, "code").Int() == 11128 {
+			return nil, statusErr{code: 400, msg: `{"error":{"type":"invalid_request_error","code":"a2a_source_policy_blocked","message":"The source rejected this invocation channel under its security policy."}}`}
+		}
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && canRefreshWorkBuddy(auth) {
 			if refreshedAuth, errRefresh := e.Refresh(ctx, auth); errRefresh == nil {
 				refreshedAuth = refreshedAuth.Clone()

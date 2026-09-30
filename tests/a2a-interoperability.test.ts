@@ -11,10 +11,13 @@ it('shares each source with every local target, preserving the source pool durin
  const root=await mkdtemp(join(await realpath(tmpdir()),'a2a-pool-'));
  const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  const paths={qoder:join(root,'qoder/settings.json'),codex:join(root,'codex','config.toml'),claude:join(root,'claude','settings.json'),workbuddy:join(root,'workbuddy','models.json')};
- const original={qoder:'{"theme":"system"}',codex:'model = "original"\n',claude:'{"env":{"KEEP":"yes"}}',workbuddy:'[{"id":"own-model","apiKey":"original-key"}]'};
+ const original={qoder:'{"theme":"system","hooks":{"local":"preserve"},"permissions":{"mode":"ask"}}',codex:'model = "original"\napproval_policy = "on-request"\nsandbox_mode = "read-only"\n',claude:'{"env":{"KEEP":"yes"},"permissions":{"defaultMode":"default","deny":["Bash(rm *)"]},"sandbox":{"enabled":true}}',workbuddy:'[{"id":"own-model","apiKey":"original-key"}]'};
  for(const target of Object.keys(paths) as Target[]){await mkdir(dirname(paths[target]),{recursive:true});await writeFile(paths[target],original[target]);}
  const credentials={qoder:join(root,'qoder/auth-fixture.json'),codex:join(root,'codex','auth.json'),claude:join(root,'claude','.credentials.json'),workbuddy:join(root,'workbuddy','.access_token')};
  for(const path of Object.values(credentials))await writeFile(path,'original-oauth-never-overwrite');
+ const workbuddySettings=join(root,'workbuddy','settings.json');
+ const localSettings='{"permissions":{"defaultMode":"default","deny":["Bash(rm *)"]},"hooks":{"PreToolUse":[]}}';
+ await writeFile(workbuddySettings,localSettings);
  await mkdir(join(root,'cliproxy'));const pool=join(root,'cliproxy','fixture-accounts.json');
  await writeFile(pool,JSON.stringify(['qoder','workbuddy','claude','codex'].map(provider=>({name:`${provider}.json`,provider,status:'active',models:['shared-model'],access_token:`original-${provider}`,refresh_token:`refresh-${provider}`}))));
  const poolBefore=await readFile(pool,'utf8');
@@ -29,6 +32,10 @@ it('shares each source with every local target, preserving the source pool durin
    const result=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target,sourceId:source.id,model:`${provider}/shared-model`,revision:state.targets.find((t:{id:string})=>t.id===target).revision,tokenLimit:1000}});
    expect(result.statusCode,result.body).toBe(200);
    const text=await readFile(paths[target],'utf8');const config=target==='codex'?parse(text):JSON.parse(text);
+   if(target==='codex')expect(config).toMatchObject({approval_policy:'on-request',sandbox_mode:'read-only'});
+   if(target==='claude')expect(config).toMatchObject({permissions:JSON.parse(original.claude).permissions,sandbox:{enabled:true}});
+   if(target==='qoder')expect(config).toMatchObject({permissions:JSON.parse(original.qoder).permissions,hooks:{local:'preserve'}});
+   expect(await readFile(workbuddySettings,'utf8')).toBe(localSettings);
    const key=target==='qoder'?config.providers['token-flow'].apiKey:target==='codex'?config.model_providers.token_flow.experimental_bearer_token:target==='claude'?config.env.ANTHROPIC_AUTH_TOKEN:config.at(-1).apiKey;
    const protocol=['codex','qoder'].includes(target)?'responses':target==='claude'?'messages':'chat/completions';
    const payload=['codex','qoder'].includes(target)?{input:'reply provider name'}:{messages:[{role:'user',content:'reply provider name'}],max_tokens:16};

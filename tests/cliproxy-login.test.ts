@@ -163,13 +163,13 @@ it('connects Qoder and WorkBuddy through device/web flow without required user c
   expect(() => validateAuthorizationURL('https://copilot.tencent.com.evil.test/login','workbuddy')).toThrow();
 });
 
-it('connects ZCode, Doubao, and Trae through callback flows and validates authorization URLs',async () => {
+it('connects ZCode through polling and Doubao/Trae through their official callback flows',async () => {
   const {manager,opened,fixture}=await setup();
   // ZCode
   const zSnap=await manager.login('zcode');
   expect(opened[0]).toMatch(/^https:\/\/chat.z.ai\/api\/oauth\/authorize/);
-  const zState=new URL(zSnap.login!.url!).searchParams.get('state');
-  expect((await fetch(`http://127.0.0.1:9999/zcode/callback?state=${zState}&code=zcode-code`)).ok).toBe(true);
+  expect(zSnap.login!.flow).toBe('device');
+  await fixture({complete:true});
   await expect.poll(() => manager.snapshot().loginState).toBe('completed');
   expect(manager.snapshot().accounts.some(a => a.provider==='zcode')).toBe(true);
   expect(manager.snapshot().models.some(m => m.provider==='zcode')).toBe(true);
@@ -188,8 +188,8 @@ it('connects ZCode, Doubao, and Trae through callback flows and validates author
   // Trae (validates nested state in redirect_url)
   const traeSnap=await manager.login('trae');
   expect(opened[2]).toMatch(/^https:\/\/www.trae.ai\/login\?redirect_url=/);
-  const traeState=new URL(new URL(traeSnap.login!.url!).searchParams.get('redirect_url')!).searchParams.get('state');
-  expect((await fetch(`http://127.0.0.1:1455/trae/callback?state=${traeState}&code=trae-code`)).ok).toBe(true);
+  const traeState=new URL(new URL(traeSnap.login!.url!).searchParams.get('redirect_url')!).searchParams.get('login_trace_id');
+  expect((await fetch(`http://127.0.0.1:1455/authorize?loginTraceID=${traeState}&userJwt=fixture-jwt&refreshToken=fixture-refresh&host=https%3A%2F%2Fapi-us-east.trae.ai`)).ok).toBe(true);
   await expect.poll(() => manager.snapshot().loginState).toBe('completed');
   expect(manager.snapshot().accounts.some(a => a.provider==='trae')).toBe(true);
   expect(manager.snapshot().models.some(m => m.provider==='trae')).toBe(true);
@@ -232,4 +232,13 @@ it('does not reimport a browser-authorized Codex account under a second filename
  await writeFile(join(root,'cliproxy/auth/browser-codex.json'),JSON.stringify(credential));
  const canonical=await realpath(root);const proxy=new CLIProxyManager(canonical,binary,'fixture-key',manager.port);cleanup.push(()=>proxy.shutdown());await proxy.start();
  await proxy.importCredential('codex',credential,true);expect(proxy.snapshot().accounts).toHaveLength(1);
+});
+
+it('automatically recovers Codex quota after two transient bridge 502s without toggling the account',async()=>{
+ const {manager,fixture}=await setup();await manager.login('codex');await fixture({complete:true});await expect.poll(()=>manager.snapshot().loginState).toBe('completed');
+ await manager.refreshQuota();const original=manager.snapshot().accounts;
+ await fixture({quotaBridgeFailures:2});const pending=manager.refreshQuota();expect(manager.refreshQuota()).toBe(pending);
+ const recovered=await pending;
+ expect(Object.values(recovered.quotas).find(q=>q.provider==='codex')?.status).toBe('ok');
+ expect((await fixture()).quotaBridgeAttempts).toBe(3);expect(recovered.accounts).toEqual(original);expect(recovered.state).toBe('running');
 });

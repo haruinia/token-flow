@@ -1,4 +1,4 @@
-import { CodexAccountsPane } from './CodexAccountsPane';
+import { AccountsPane } from './AccountsPane';
 import { A2APane, MaintenancePane } from './A2APane';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -6,6 +6,7 @@ import type { RunRecord } from '@cua-sample/contracts';
 import './style.css';
 import { Icon, type IconName } from './Icons';
 import { GatewayHome } from './GatewayHome';
+import type { AgentKind } from './agent-config';
 import { AgentConnections } from './AgentConnections';
 import { GatewayKeysPane } from './GatewayKeysPane';
 import { LocalAgentPane } from './LocalAgentPane';
@@ -23,6 +24,7 @@ function App(){
   const [modelView,setModelView]=useState<'accounts'|'connection'|'gateway'|'keys'>('accounts');
   const [credentialWarnings,setCredentialWarnings]=useState<string[]>([]);
   const [preferredModel,setPreferredModel]=useState('');
+  const [preferredKind,setPreferredKind]=useState<AgentKind>('codex');
   const [historyQuery,setHistoryQuery]=useState('');
   const [historyStatus,setHistoryStatus]=useState('all');
   const [tab,setTab]=useState('a2a');
@@ -53,19 +55,19 @@ function App(){
       <button className="newTask" onClick={()=>{setTab('models');setModelView('accounts');}}><Icon name="plus"/>连接厂商账号</button>
       <span className="navLabel">模型网关</span>
       <nav aria-label="主导航">{[['a2a','plug','A2A 接入'],['gateway','workspace','API 总览'],['models','model','模型中心'],['agents','plug','Agent 接入'],['keys','shield','API Keys']].map(([id,icon,name])=><button key={id} className={tab===id?'selected':''} aria-current={tab===id?'page':undefined} aria-label={name} onClick={()=>{setTab(id);if(id==='models')setModelView('accounts');}}><Icon name={icon as IconName}/>{name}</button>)}</nav>
-      <span className="navLabel secondaryLabel">辅助工具</span><nav aria-label="辅助导航">{[['accounts','model','多账号切换'],['maintenance','sliders','网关维修'],['history','history','执行历史']].map(([id,icon,name])=><button key={id} className={tab===id?'selected':''} aria-current={tab===id?'page':undefined} aria-label={name} onClick={()=>setTab(id)}><Icon name={icon as IconName}/>{name}</button>)}</nav>
+      <span className="navLabel secondaryLabel">辅助工具</span><nav aria-label="辅助导航">{[['accounts','model','多账号切换'],['maintenance','sliders','网关维修'],['history','history','执行历史'],['contact','message','联系我们']].map(([id,icon,name])=><button key={id} className={tab===id?'selected':''} aria-current={tab===id?'page':undefined} aria-label={name} onClick={()=>setTab(id)}><Icon name={icon as IconName}/>{name}</button>)}</nav>
       <div className="sideStatus"><small><Icon name="plug" size={14}/>本机网关</small><p><i className={local.state==='running'?'dot ok':'dot'}/>服务状态 <b>{stateNames[local.state]??local.state}</b></p><p><i className={local.accounts.some(a=>!a.disabled)?'dot ok':'dot'}/>启用账号 <b>{local.accounts.filter(a=>!a.disabled).length}</b></p><p><i className={local.models.length?'dot ok':'dot'}/>可用模型 <b>{local.models.length}</b></p><div className="foot"><Icon name="shield" size={14}/>厂商凭据仅保存在本机</div></div>
     </aside>
-    <main><header className="top"><div className="pageIdentity"><Icon name={tab==='models'?'model':tab==='agents'?'plug':tab==='keys'?'shield':tab==='history'?'history':'workspace'} size={17}/><h1>{{a2a:'A2A 接入',gateway:'API 总览',agents:'Agent 接入',keys:'API Keys',accounts:'多账号切换',maintenance:'网关维修',models:'模型中心',history:'执行历史'}[tab]}</h1><span className="localBadge">token-flow / local</span></div><div className="topActions"><span className="status"><i className={`dot ${local.state==='running'?'ok':''}`}/>网关{stateNames[local.state]??local.state}</span><button onClick={()=>{setTab('models');setModelView('gateway');}}><Icon name="sliders" size={15}/>网关设置</button></div></header>
+    <main><header className="top"><div className="pageIdentity"><Icon name={tab==='models'?'model':tab==='agents'?'plug':tab==='keys'?'shield':tab==='contact'?'message':tab==='history'?'history':'workspace'} size={17}/><h1>{{a2a:'A2A 接入',gateway:'API 总览',agents:'Agent 接入',keys:'API Keys',accounts:'多账号切换',maintenance:'网关维修',models:'模型中心',history:'执行历史',contact:'联系我们'}[tab]}</h1><span className="localBadge">token-flow / local</span></div><div className="topActions"><span className="status"><i className={`dot ${local.state==='running'?'ok':''}`}/>网关{stateNames[local.state]??local.state}</span><button onClick={()=>{setTab('models');setModelView('gateway');}}><Icon name="sliders" size={15}/>网关设置</button></div></header>
       {credentialWarnings.length>0&&<div className="notice credentialWarning" role="alert">{credentialWarnings.map(message=><p key={message}>{message}</p>)}<button onClick={()=>{setTab('models');setModelView('connection');}}>查看模型配置</button><button onClick={()=>setCredentialWarnings([])}>知道了</button></div>}
       {error&&<div className="error" role="alert">{error}<button aria-label="关闭错误" onClick={()=>setError('')}>×</button></div>}
       {notice&&<div className="notice" role="status">{notice}</div>}
       {busy&&<div className="busy" role="status">{busy}…</div>}
-      {tab==='a2a'&&<A2APane local={local} onManual={()=>setTab('agents')} onAccounts={()=>{setReturnAfterLogin(local.login?.id??'');setTab('models');setModelView('accounts');}} onMaintenance={()=>setTab('maintenance')}/>}
-      {tab==='accounts'&&<CodexAccountsPane local={local} onAccounts={()=>{setTab('models');setModelView('accounts');}} onGateway={()=>setTab('a2a')}/>}
+      {tab==='a2a'&&<A2APane local={local} onManual={(kind,model)=>{setPreferredKind(kind??'codex');if(model)setPreferredModel(model);setTab('agents');}} onAccounts={()=>{setReturnAfterLogin(local.login?.id??'');setTab('models');setModelView('accounts');}} onMaintenance={()=>setTab('maintenance')}/>}
+      {tab==='accounts'&&<AccountsPane local={local} onAccounts={()=>{setTab('models');setModelView('accounts');}} onGateway={()=>setTab('a2a')}/>}
       {tab==='maintenance'&&<MaintenancePane local={local}/>}
       {tab==='gateway'&&<GatewayHome local={local} onNavigate={target=>{if(target==='agents'||target==='keys')setTab(target);else{setTab('models');setModelView(target);}}}/>}
-      {tab==='agents'&&<AgentConnections local={local} preferredModel={preferredModel} onKeys={()=>setTab('keys')} onAccounts={()=>{setTab('models');setModelView('accounts');}}/>}
+      {tab==='agents'&&<AgentConnections local={local} preferredKind={preferredKind} preferredModel={preferredModel} onKeys={()=>setTab('keys')} onAccounts={()=>{setTab('models');setModelView('accounts');}}/>}
       {tab==='keys'&&<GatewayKeysPane local={local}/>}
       {tab==='models'&&<><button className="returnA2A" onClick={()=>setTab('a2a')}>← 返回接入首页</button><div className="modelCenterHeading"><div><span className="eyebrow">YOUR MODELS, ONE PLACE</span><h2>连接一次，模型随时可用。</h2><p>认证厂商账号，查看额度，将可用模型提供给你的 Agent。</p></div><div className="gatewaySummary"><span><i className={`dot ${local.state==='running'?'ok':''}`}/>网关{stateNames[local.state]??local.state}</span><strong>{local.accounts.filter(a=>!a.disabled).length}<small>启用账号</small><b>·</b>{local.models.length}<small>可用模型</small></strong></div></div><div className="modelCenterTabs" role="tablist" aria-label="模型中心">{([['accounts','账号与模型'],['connection','接口与能力'],['keys','API Keys'],['gateway','网关设置']] as const).map(([id,label])=><button key={id} role="tab" aria-selected={modelView===id} onClick={()=>setModelView(id)}>{label}</button>)}<span>{provider.model?`当前模型 · ${provider.model}`:'尚未选择任务模型'}</span></div></>}
       {tab==='models'&&modelView==='connection'&&<div className="settings"><section><div className="sectionTitle"><h2>任务模型</h2><span>选择接口并验证能力</span></div><p className="hint">已连接账号的模型可在「账号与模型」中选择。也可以接入 OpenAI 或其他兼容接口。</p><form onSubmit={e=>{e.preventDefault();void act('保存设置',async()=>{await save();setNotice('设置已保存，请刷新模型并探测能力。');});}}>
@@ -85,6 +87,7 @@ function App(){
         onImportLocal={provider=>act('导入本机应用凭据',async()=>{setLocal(await api(`/api/local-agent/import-local/${provider}`,{}));setNotice(`已成功导入本机 ${provider} 账号凭据。`);})}
         onUseModel={async model=>{setPreferredModel(model);setTab('agents');}}/>}
       {tab==='history'&&<section className="history"><div className="sectionTitle"><h2>执行历史</h2><span>{visibleHistory.length} / {history.length} 条记录</span></div><div className="historyFilters"><label><span className="srOnly">搜索历史</span><input type="search" value={historyQuery} onChange={e=>setHistoryQuery(e.target.value)} placeholder="搜索任务内容或模型…"/></label><label><span className="srOnly">任务状态</span><select aria-label="任务状态" value={historyStatus} onChange={e=>setHistoryStatus(e.target.value)}><option value="all">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已停止</option><option value="running">运行中</option></select></label></div>{!history.length?<div className="empty"><Icon name="history" size={32}/><h2>暂无历史记录</h2></div>:!visibleHistory.length?<div className="empty"><Icon name="history" size={28}/><h2>没有匹配的记录</h2><p>试试其他关键词，或清除筛选条件。</p><button onClick={()=>{setHistoryQuery('');setHistoryStatus('all');}}>清除筛选</button></div>:visibleHistory.map(item=><div className="historyRow" key={item.id}><span className="mono">{new Date(item.startedAt).toLocaleString()}</span><strong>{item.prompt}</strong><span>{item.model}</span><b>{stateNames[item.status]}</b></div>)}</section>}
+      {tab==='contact'&&<section className="history"><div className="sectionTitle"><h2>联系邮箱</h2></div><div className="contactList"><p><strong>everything call me：</strong><a className="contactLink" href="mailto:wangwenyang9527@gmail.com">wangwenyang9527@gmail.com</a></p><p><strong>Joint test personnel：</strong><a className="contactLink" href="mailto:doubyrui@gmail.com">doubyrui@gmail.com</a></p></div></section>}
     </main>
   </div>;
 }

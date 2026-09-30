@@ -126,12 +126,13 @@ describe('quota layer', () => {
   });
   it('reports ZCode, Doubao, and Trae status correctly', async () => {
     const {call, calls} = responder({
-      'https://chat.z.ai/api/oauth/userinfo': json({data: {nickname: 'ai-coder', is_vip: true}}),
+      'https://api.z.ai/api/monitor/usage/quota/limit': json({success: true, data: {level: 'PRO', limits: [{type: 'TOKENS_LIMIT', percentage: 25, usage: 1000, currentValue: 250, nextResetTime: 1790427600000}]}}),
     });
     const zcodeReport = await quotaProviders.zcode.fetch(call, {provider: 'zcode'});
-    expect(calls[0].header.Authorization).toBe('Bearer $TOKEN$');
-    expect(zcodeReport.plan).toBe('Z.AI VIP 订阅');
-    expect(zcodeReport.note).toContain('ai-coder');
+    expect(calls[0].header.Authorization).toBe('$TOKEN$');
+    expect(zcodeReport.plan).toBe('Z.AI Coding Plan · PRO');
+    expect(zcodeReport.windows[0]).toMatchObject({usedPercent: 25, used: 250, limit: 1000});
+    expect(zcodeReport.windows[0].resetsAt).toBe(new Date(1790427600000).toISOString());
 
     const doubaoReport = await quotaProviders.doubao.fetch(call, {provider: 'doubao', planType: 'MarsCode 专业版'});
     expect(doubaoReport.plan).toBe('MarsCode 专业版');
@@ -139,7 +140,10 @@ describe('quota layer', () => {
 
     const traeReport = await quotaProviders.trae.fetch(call, {provider: 'trae'});
     expect(traeReport.plan).toContain('Trae');
-    expect(traeReport.note).toContain('Trae 账号已就绪');
+    expect(traeReport.note).toContain('尚未读取 Trae 剩余额度');
+  });
+  it('does not turn a ZCode authentication error into a ready account', async () => {
+    await expect(quotaProviders.zcode.fetch(async () => ({statusCode: 401, header: {}, body: '{}'}), {provider: 'zcode'})).rejects.toThrow();
   });
 });
 
@@ -154,4 +158,10 @@ it('distinguishes missing Kimi quota from zero allowance and recognizes ratio wi
  const report=await quotaProviders.kimi.fetch(async()=>json({usages:{limit5h:{usedRatio:0,resetAt:'2026-09-23T00:00:00Z'},monthCode:{usedRatio:1}}}),{provider:'kimi'});
  expect(report.windows.map(w=>w.usedPercent)).toEqual([0,100]);
  const zero=await quotaProviders.kimi.fetch(async()=>json({usage:{used:0,limit:0}}),{provider:'kimi'});expect(zero.windows[0].limit).toBe(0);expect(zero.windows[0].usedPercent).toBeNull();
+});
+
+it('distinguishes a ZCode account without Coding Plan from authentication or unknown business errors', async () => {
+ const noPlan = await quotaProviders.zcode.fetch(async () => json({code: 500, msg: '当前用户不存在coding plan', success: false}), {provider: 'zcode'});
+ expect(noPlan.plan).toContain('未开通'); expect(noPlan.windows).toEqual([]); expect(noPlan.note).not.toContain('重新登录');
+ await expect(quotaProviders.zcode.fetch(async () => json({code: 500, msg: 'temporary failure', success: false}), {provider: 'zcode'})).rejects.toThrow('未成功');
 });

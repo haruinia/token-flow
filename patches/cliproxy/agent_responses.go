@@ -17,6 +17,40 @@ import (
 
 type nativeAgentStream func(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error)
 
+// Supplement the upstream codecs only for request controls they omit. Tool
+// schemas, calls/results, thinking and response events stay in the SDK registry.
+// An empty responses field means the option has no Responses wire equivalent;
+// retain it from the original request when building the native Chat payload.
+var agentParameterFields = []struct {
+	aliases         []string
+	responses, chat string
+}{
+	{[]string{"max_output_tokens", "max_completion_tokens", "max_tokens"}, "max_output_tokens", "max_tokens"},
+	{[]string{"temperature"}, "temperature", "temperature"},
+	{[]string{"top_p"}, "top_p", "top_p"},
+	{[]string{"parallel_tool_calls"}, "parallel_tool_calls", "parallel_tool_calls"},
+	{[]string{"stop", "stop_sequences"}, "", "stop"},
+}
+
+func preserveAgentParameters(original, converted []byte, toChat bool) []byte {
+	for _, field := range agentParameterFields {
+		target := field.responses
+		if toChat {
+			target = field.chat
+		}
+		if target == "" {
+			continue
+		}
+		for _, alias := range field.aliases {
+			if value := gjson.GetBytes(original, alias); value.Exists() {
+				converted, _ = sjson.SetBytes(converted, target, value.Value())
+				break
+			}
+		}
+	}
+	return converted
+}
+
 func agentOriginal(req cliproxyexecutor.Request, opts cliproxyexecutor.Options) []byte {
 	if len(opts.OriginalRequest) > 0 {
 		return opts.OriginalRequest
@@ -35,23 +69,39 @@ func agentCanonicalRequest(req cliproxyexecutor.Request, opts cliproxyexecutor.O
 	case sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex:
 		body = req.Payload
 	case sdktranslator.FormatClaude, sdktranslator.FormatOpenAI:
-		body = sdktranslator.TranslateRequest(opts.SourceFormat, sdktranslator.FormatCodex, req.Model, req.Payload, true)
+		payload := req.Payload
+		if opts.SourceFormat == sdktranslator.FormatClaude {
+			// Chat-backed agents must not inherit Codex's default reasoning
+			// effort when the Messages client did not request thinking.
+			if !gjson.GetBytes(payload, "thinking").Exists() {
+				payload, _ = sjson.SetBytes(payload, "thinking.type", "disabled")
+			}
+			// Responses/Chat have no is_error flag. Keep that information in the
+			// result content; otherwise an empty failed execution looks successful.
+			for i, message := range gjson.GetBytes(payload, "messages").Array() {
+				for j, part := range message.Get("content").Array() {
+					if part.Get("type").String() != "tool_result" || !part.Get("is_error").Bool() {
+						continue
+					}
+					path := "messages." + strconv.Itoa(i) + ".content." + strconv.Itoa(j) + ".content"
+					content := part.Get("content")
+					if content.IsArray() {
+						parts := []any{map[string]string{"type": "text", "text": "Tool execution failed (is_error=true)."}}
+						for _, value := range content.Array() {
+							parts = append(parts, value.Value())
+						}
+						payload, _ = sjson.SetBytes(payload, path, parts)
+					} else {
+						payload, _ = sjson.SetBytes(payload, path, "Tool execution failed (is_error=true).\n"+content.String())
+					}
+				}
+			}
+		}
+		body = sdktranslator.TranslateRequest(opts.SourceFormat, sdktranslator.FormatCodex, req.Model, payload, true)
 	default:
 		return nil, statusErr{code: 400, msg: "unsupported agent request protocol"}
 	}
-	// Codex-specific request codecs intentionally omit output caps; generic
-	// Responses sources must still honor the caller's cap and sampling settings.
-	for _, field := range []string{"temperature", "top_p", "parallel_tool_calls"} {
-		if value := gjson.GetBytes(req.Payload, field); value.Exists() {
-			body, _ = sjson.SetBytes(body, field, value.Value())
-		}
-	}
-	for _, field := range []string{"max_output_tokens", "max_completion_tokens", "max_tokens"} {
-		if value := gjson.GetBytes(req.Payload, field); value.Exists() {
-			body, _ = sjson.SetBytes(body, "max_output_tokens", value.Value())
-			break
-		}
-	}
+	body = preserveAgentParameters(req.Payload, body, false)
 	body, _ = sjson.SetBytes(body, "stream", true)
 	return body, nil
 }
@@ -59,9 +109,21 @@ func agentCanonicalRequest(req cliproxyexecutor.Request, opts cliproxyexecutor.O
 // Both provider transports supply native Chat chunks. Normalize them once to
 // Responses events; all client-facing protocols consume this same stream.
 func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, native nativeAgentStream) (*cliproxyexecutor.StreamResult, []byte, error) {
+	// Native Chat transports cannot produce a Responses compaction artifact.
+	if opts.Alt == "responses/compact" {
+		return nil, nil, statusErr{code: 400, msg: "responses/compact is not supported by this source agent"}
+	}
 	canonical, err := agentCanonicalRequest(req, opts)
 	if err != nil {
 		return nil, nil, err
+	}
+	if err = agentToolsSupported(gjson.GetBytes(canonical, "tools")); err != nil {
+		return nil, nil, err
+	}
+	if format := gjson.GetBytes(canonical, "text.format.type").String(); format != "" && format != "text" {
+		// Native Chat sources can ignore response_format and still return 200.
+		// Do not claim schema enforcement when this transport cannot provide it.
+		return nil, nil, statusErr{code: 400, msg: `{"error":{"type":"invalid_request_error","code":"a2a_structured_output_unsupported","message":"Structured output is not supported by this source adapter."}}`}
 	}
 	translated := req
 	providerRequest := canonical
@@ -73,14 +135,11 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 		}
 	}
 	translated.Payload = sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatOpenAI, req.Model, providerRequest, true)
-	// Stop sequences have no Responses field; retain this client option at
-	// the provider boundary instead of silently discarding it in the bridge.
-	for _, field := range []string{"stop", "stop_sequences"} {
-		if value := gjson.GetBytes(req.Payload, field); value.Exists() {
-			translated.Payload, _ = sjson.SetBytes(translated.Payload, "stop", value.Value())
-			break
-		}
+	translated.Payload, err = agentToolChoice(canonical, translated.Payload)
+	if err != nil {
+		return nil, nil, err
 	}
+	translated.Payload = preserveAgentParameters(req.Payload, translated.Payload, true)
 	upstream, err := native(ctx, auth, translated, opts)
 	if err != nil {
 		return nil, nil, err
@@ -122,6 +181,56 @@ func startAgentResponses(ctx context.Context, auth *cliproxyauth.Auth, req clipr
 	headers.Set("Content-Type", "text/event-stream")
 	headers.Del("Content-Length")
 	return &cliproxyexecutor.StreamResult{Headers: headers, Chunks: out}, canonical, nil
+}
+
+// Chat-backed sources can execute client function/custom tools, but have no
+// Responses server-side tool runtime. Never silently drop those declarations.
+func agentToolsSupported(tools gjson.Result) error {
+	for _, tool := range tools.Array() {
+		switch tool.Get("type").String() {
+		case "function", "custom":
+		case "namespace":
+			if err := agentToolsSupported(tool.Get("tools")); err != nil {
+				return err
+			}
+		default:
+			return statusErr{code: 400, msg: `{"error":{"type":"invalid_request_error","code":"a2a_server_tool_unsupported","message":"This source supports client function/custom tools only; server-side or unknown tool types are not supported."}}`}
+		}
+	}
+	return nil
+}
+
+// Responses names the tool directly; Chat requires a nested function selector,
+// including custom tools represented by the codec's {input:string} wrapper.
+func agentToolChoice(canonical, chat []byte) ([]byte, error) {
+	choice := gjson.GetBytes(canonical, "tool_choice")
+	if !choice.Exists() {
+		return chat, nil
+	}
+	if choice.Type == gjson.String {
+		switch choice.String() {
+		case "auto", "none", "required":
+			return sjson.SetBytes(chat, "tool_choice", choice.String())
+		}
+		return nil, statusErr{code: 400, msg: "unsupported tool_choice"}
+	}
+	name := strings.TrimSpace(choice.Get("name").String())
+	namespace := choice.Get("namespace").String()
+	if namespace != "" && !strings.HasPrefix(name, namespace) && !strings.HasPrefix(name, "mcp__") {
+		if !strings.HasSuffix(namespace, "__") {
+			namespace += "__"
+		}
+		name = namespace + name
+	}
+	if choice.Get("type").String() != "function" && choice.Get("type").String() != "custom" {
+		return nil, statusErr{code: 400, msg: "tool_choice is not supported by this source; use auto, none, required or a named function/custom tool"}
+	}
+	for _, tool := range gjson.GetBytes(chat, "tools").Array() {
+		if name != "" && tool.Get("function.name").String() == name {
+			return sjson.SetBytes(chat, "tool_choice", map[string]any{"type": "function", "function": map[string]string{"name": name}})
+		}
+	}
+	return nil, statusErr{code: 400, msg: "tool_choice names an unavailable tool"}
 }
 
 // Translator output contains complete SSE records, never arbitrary socket
@@ -245,7 +354,7 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 		}
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		seen, finished := false, false
+		seen, finished, toolCalls := false, false, false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if !strings.HasPrefix(line, "data:") {
@@ -258,6 +367,8 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 			if data == "[DONE]" {
 				if !seen {
 					fail("upstream returned no model events")
+				} else if toolCalls && !finished {
+					fail("upstream stream ended before completion")
 				}
 				return
 			}
@@ -281,6 +392,8 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 			if data == "[DONE]" {
 				if !seen {
 					fail("upstream returned no model events")
+				} else if toolCalls && !finished {
+					fail("upstream stream ended before completion")
 				}
 				return
 			}
@@ -298,6 +411,11 @@ func readAgentChatStream(ctx context.Context, resp *http.Response, provider stri
 			}
 			if len(chunk.Get("choices").Array()) > 0 {
 				seen = true
+			}
+			// Some native text streams use DONE alone. Tool calls require an
+			// explicit finish reason so partial arguments cannot become success.
+			if len(chunk.Get("choices.0.delta.tool_calls").Array()) > 0 {
+				toolCalls = true
 			}
 			if reason := chunk.Get("choices.0.finish_reason"); reason.Exists() && reason.Type != gjson.Null && reason.String() != "" {
 				finished = true

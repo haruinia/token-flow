@@ -35,6 +35,16 @@ it('connects and restores a local Agent through admin APIs without exposing keys
   const clientHeaders={host:headers.host,authorization:`Bearer ${config.env.ANTHROPIC_AUTH_TOKEN}`};expect((await service.app.inject({url:'/v1/models',headers:clientHeaders})).statusCode).toBe(200);
   const fast=await service.app.inject({method:'POST',url:'/v1/messages',headers:clientHeaders,payload:{model:config.env.ANTHROPIC_SMALL_FAST_MODEL,messages:[{role:'user',content:'OK'}],max_tokens:16}});expect(fast.statusCode,fast.body).toBe(200);
   const restored=await service.app.inject({method:'POST',url:'/api/a2a/restore',headers,payload:{id:response.json().id}});expect(restored.statusCode).toBe(200);expect(await readFile(path,'utf8')).toBe(original);expect((await service.app.inject({url:'/v1/models',headers:clientHeaders})).statusCode).toBe(401);
+  const history=(await service.app.inject({url:'/api/a2a',headers})).json().targets[1];expect(history.connection).toBeNull();expect(history.backups[0]).toMatchObject({sourceId,model:'codex/shared-model',state:'restored'});
+  const again=await service.app.inject({method:'POST',url:'/api/a2a/connect',headers,payload:{target:'claude',sourceId:history.backups[0].sourceId,model:history.backups[0].model,revision:history.revision}});expect(again.statusCode,again.body).toBe(200);
+  const nextConfig=JSON.parse(await readFile(path,'utf8'));await writeFile(path,'{"model":"reinstalled","userSetting":true}');
+  const changed=(await service.app.inject({url:'/api/a2a',headers})).json().targets[1];const deletion={id:again.json().id,revision:changed.revision};
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/delete',headers:{host:headers.host},payload:deletion})).statusCode).toBe(401);
+  expect((await service.app.inject({method:'POST',url:'/api/a2a/delete',headers,payload:{...deletion,revision:'0'.repeat(64)}})).statusCode).toBe(409);
+  const deleted=await service.app.inject({method:'POST',url:'/api/a2a/delete',headers,payload:deletion});expect(deleted.statusCode,deleted.body).toBe(200);expect(deleted.body).not.toContain('tfl_');
+  expect(await readFile(path,'utf8')).toBe('{"model":"reinstalled","userSetting":true}');expect((await service.app.inject({url:'/api/a2a',headers})).json().targets[1].connection).toBeNull();
+  expect((await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${nextConfig.env.ANTHROPIC_AUTH_TOKEN}`}})).statusCode).toBe(401);
+
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });
 
@@ -62,7 +72,8 @@ it('rechecks a saved maintenance model once after delayed catalog discovery, not
 it('queues the selected replacement model for approval, preserves stale edits and revokes the superseded key',async()=>{
  const root=await mkdtemp(join(await realpath(tmpdir()),'repair-service-'));const allocator=createServer();await new Promise<void>(r=>allocator.listen(0,'127.0.0.1',r));const port=(allocator.address() as {port:number}).port;await new Promise<void>(r=>allocator.close(()=>r()));
  await mkdir(join(root,'cliproxy'));await mkdir(join(root,'workbuddy'));await writeFile(join(root,'cliproxy/fixture-accounts.json'),JSON.stringify([{name:'qoder.json',provider:'qoder',status:'active',models:['old','new']}]));const path=join(root,'workbuddy/models.json');await writeFile(path,'[]');
- const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:path},agentProcesses:async()=>[]});
+ let running=false;
+ const service=await createDesktopService({root,proxyPort:port,binary:resolve('tests/fixtures/fake-cliproxy.mjs'),token:'admin-token',localKey:'internal-key',secrets:{get:async()=>'',set:async()=>{}},agentPaths:{qoder:join(root,'qoder/settings.json'),codex:join(root,'codex/config.toml'),claude:join(root,'claude/settings.json'),workbuddy:path},agentProcesses:async()=>running?[123]:[]});
  const headers={host:'127.0.0.1:9527',authorization:'Bearer admin-token'};const post=(url:string,payload:Record<string,unknown>)=>service.app.inject({method:'POST',url,headers,payload});
  try{
   await service.proxy.start();const sourceId=service.proxy.snapshot().accounts[0].id;const state=(await service.app.inject({url:'/api/a2a',headers})).json();
@@ -77,6 +88,9 @@ it('queues the selected replacement model for approval, preserves stale edits an
   await writeFile(path,'[]');const fresh=await post('/api/maintenance/propose',{chain});const approved=await post('/api/maintenance/approve',{id:fresh.json().id,approve:true});expect(approved.json().proposal.status).toBe('completed');expect(JSON.parse(await readFile(path,'utf8'))[0].id).toBe('qoder/new');
   expect((await service.app.inject({url:'/v1/models',headers:{host:headers.host,authorization:`Bearer ${oldKey}`}})).statusCode).toBe(401);
   expect((await post('/api/maintenance/approve',{id:fresh.json().id,approve:true})).statusCode).toBe(409);
-  const restore=await post('/api/a2a/restore',{id:approved.json().proposal.result.id});expect(restore.statusCode,restore.body).toBe(200);expect(await readFile(path,'utf8')).toBe('[]');
+  running=true;const current=(await service.app.inject({url:'/api/a2a',headers})).json().targets.find((t:{id:string})=>t.id==='workbuddy');
+  expect((await post('/api/a2a/restore',{id:current.connection.id,allowRunning:true})).statusCode).toBe(400);
+  expect((await post('/api/a2a/restore',{id:current.connection.id,allowRunning:true,revision:'0'.repeat(64)})).statusCode).toBe(409);
+  const restore=await post('/api/a2a/restore',{id:current.connection.id,revision:current.revision,allowRunning:true});expect(restore.statusCode,restore.body).toBe(200);expect(await readFile(path,'utf8')).toBe('[]');
  }finally{await service.app.close();await rm(root,{recursive:true,force:true});}
 });

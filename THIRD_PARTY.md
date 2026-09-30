@@ -13,7 +13,7 @@ CLIProxyAPI 的配置文件与命令均根据该提交的 `config.example.yaml`�
 
 账号连接复用该提交的 `/v0/management/codex-auth-url`、`anthropic-auth-url`、`get-auth-status`、`oauth-session`、`oauth-callback`、`auth-files`、`auth-files/status`。桌面端自建 loopback-only 回调接收器，不启用上游 `is_webui` 转发器，因为该版本转发器绑定 `0.0.0.0`。`scripts/sidecar-overlay.mjs` 在编译时将内部 `X-Token-Flow-Auth` 请求头映射到上游已有的 pinned credential 元数据。桌面网关从持久授权生成此头，不透传客户端的同名头。
 
-Qoder / WorkBuddy 修复基于当前已扩展这些来源的 CLIProxyAPI 工作树（其中包含额外的认证、模型注册等本地改造，不等同于上述原始提交）。`patches/cliproxy/` 保留相关执行器、Qoder 协议和共用 `agent_responses.go`，构建 overlay 优先使用它们。两种来源的请求和原生事件通过共用层归一为 Responses，再适配 Messages / Chat Completions；保留系统提示的权限层级、工具定义、调用及结果、输出上限与用量，拒绝空流和异常断流，取消时关闭上游。复用名为 Codex 的 Responses 编解码器不会选择 Codex 账号或产生额外 HTTP 推理请求。其他来源仍使用原有执行器，尚未全部迁移或实测。单独恢复原始提交不足以构建这些扩展，仍需保留当前扩展工作树。`tests/sidecar/` 的回归测试运行真实执行器和翻译器，只模拟上游网络。
+`patches/cliproxy/upstream.patch` 保存相对上述固定提交的来源扩展，包括 ZCode、Trae、Qoder、WorkBuddy、Doubao 的认证、模型注册和执行器。`node scripts/fetch-upstream.mjs` 在检出后自动应用补丁；重复执行会识别已应用状态，遇到冲突会保留现有工作树并停止，不覆盖本地改动。`patches/cliproxy/` 还保留相关执行器、Qoder 协议和共用 `agent_responses.go`，构建 overlay 优先使用它们。Qoder / WorkBuddy 的请求和原生事件通过共用层归一为 Responses，再适配 Messages / Chat Completions；保留系统提示的权限层级、工具定义、调用及结果、输出上限与用量，拒绝空流和异常断流，取消时关闭上游。复用名为 Codex 的 Responses 编解码器不会选择 Codex 账号或产生额外 HTTP 推理请求。其他来源仍使用原有执行器，尚未全部迁移或实测。`tests/sidecar/` 的回归测试运行真实执行器和翻译器，只模拟上游网络。
 
 ## Microsoft Playwright extension relay reference
 

@@ -28,7 +28,8 @@ export function callbackProvider(spec: CallbackSpec): LoginProvider {
         const redirect = url.searchParams.get('redirect_url');
         if (!redirect) return null;
         try {
-          return new URL(redirect).searchParams.get('state');
+          const target = new URL(redirect);
+          return target.searchParams.get('state') ?? (spec.id === 'trae' ? target.searchParams.get('login_trace_id') : null);
         } catch {
           return null;
         }
@@ -44,9 +45,20 @@ export function callbackProvider(spec: CallbackSpec): LoginProvider {
 export function validateCallbackURL(provider: LoginProvider, value: string, state: string) {
   if (!provider.callback) throw new Error(`${provider.label} 使用设备码授权，不需要回调地址。`);
   const url = new URL(value);
+  // Trae echoes login_trace_id as loginTraceID; it does not echo OAuth state.
+  if (provider.id === 'trae') {
+    const trace = url.searchParams.get('loginTraceID');
+    if (trace && (trace !== state || (url.searchParams.has('state') && url.searchParams.get('state') !== trace))) throw new Error('授权会话校验失败，请重新连接。');
+    if (trace) url.searchParams.set('state', trace);
+    const host = url.searchParams.get('host');
+    if (host) {
+      const api = new URL(host);
+      if (api.protocol !== 'https:' || !api.hostname.endsWith('.trae.ai') || api.port || api.username || api.password || api.pathname !== '/' || api.search || api.hash) throw new Error('Trae 返回了非预期的服务地址。');
+    }
+  }
   if (url.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(url.hostname) || url.port !== String(provider.callback.port) ||
       url.pathname !== provider.callback.path || url.username || url.password || url.hash || url.searchParams.get('state') !== state ||
-      (!url.searchParams.get('code') && !url.searchParams.get('error') && !url.searchParams.get('authCodeInfo'))) throw new Error('请粘贴本次授权完成后的完整 localhost 回调地址，不能使用旧会话地址。');
+      (!url.searchParams.get('code') && !url.searchParams.get('error') && !url.searchParams.get('authCodeInfo') && !(provider.id === 'trae' && url.searchParams.get('userJwt') && url.searchParams.get('refreshToken')))) throw new Error('请粘贴本次授权完成后的完整 localhost 回调地址，不能使用旧会话地址。');
   return url;
 }
 
